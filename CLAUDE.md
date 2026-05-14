@@ -27,9 +27,9 @@ and reasoning — transparency is the core feature, not just accuracy.
 | Backend | FastAPI | Runs on Raspberry Pi |
 | Tunnel | Cloudflare Tunnel | Exposes Pi endpoint publicly |
 | Auth | Cloudflare Access | Gate on the tunnel endpoint |
-| Blur filter | OpenCV Laplacian variance | Local, free, fast |
-| Vision scoring | Gemini 1.5 Flash | Near-free, strong JSON output |
-| Ranking | Python weighted scoring | Swappable profiles |
+| Technical scoring | OpenCV (Laplacian + Tenengrad + histogram) + MediaPipe Face Mesh | Deterministic, local, free, fast |
+| Semantic scoring | Gemini 1.5 Flash | Expression, composition, subject prominence only |
+| Ranking | Python two-layer weighted scoring | Swappable profiles |
 | Storage | None (ephemeral) | Photos deleted from Pi immediately post-scoring |
 | Secrets | `.env` + python-dotenv | Never hardcoded, never committed |
 
@@ -61,9 +61,9 @@ photorank/
 ├── .env                    ← secrets (never committed)
 ├── requirements.txt        ← Phase 1 deps
 ├── phase1/
-│   ├── blur_filter.py      ← OpenCV Laplacian blur detection
-│   ├── scorer.py           ← Gemini 1.5 Flash vision scoring
-│   └── ranker.py           ← weighted scoring + CLI entry point
+│   ├── blur_filter.py      ← deterministic technical scorer (sharpness/exposure/eye_openness)
+│   ├── scorer.py           ← Gemini semantic scorer (expression/composition/subject_focus)
+│   └── ranker.py           ← two-layer merge, profile weights, CLI entry point
 ├── api/
 │   └── main.py             ← Phase 2: FastAPI wrapper
 └── frontend/
@@ -80,62 +80,116 @@ photorank/
 # Score a folder of photos, output ranked JSON
 python phase1/ranker.py --input /path/to/photos --profile family
 
-# Score with custom weights
+# Score with custom weights (all six axes required)
 python phase1/ranker.py --input /path/to/photos --profile custom \
-  --weights '{"sharpness": 0.4, "expression": 0.3, "composition": 0.1, "exposure": 0.1, "subject_focus": 0.1}'
+  --weights '{"sharpness":0.2,"exposure":0.1,"eye_openness":0.2,"expression":0.2,"composition":0.2,"subject_focus":0.1}'
 
-# Pipe through blur filter first (skips obviously blurry photos)
-python phase1/ranker.py --input /path/to/photos --profile portrait --blur-threshold 100
+# Adjust blur gate threshold
+python phase1/ranker.py --input /path/to/photos --profile portrait --blur-threshold 80
+
+# Run just the deterministic scorer standalone
+python phase1/blur_filter.py /path/to/photos --threshold 100
 ```
 
 ### Module responsibilities
 
-- **blur_filter.py** — Computes Laplacian variance for each image. Returns a
-  blur score; images below the threshold are flagged/excluded before sending to
-  Gemini. Keeps costs down and prevents wasting API quota on unusable shots.
+- **blur_filter.py** — Layer 1 deterministic scorer. Computes three objective
+  technical metrics per image:
+  - **sharpness** — combined Laplacian variance + Tenengrad gradient energy,
+    normalized to 1–10. Two measures together resist false positives (e.g. a
+    high-contrast out-of-focus shot can fool Laplacian alone).
+  - **exposure** — histogram analysis: mean brightness, contrast (std dev),
+    highlight/shadow clipping fractions → 1–10.
+  - **eye_openness** — MediaPipe Face Mesh EAR (eye aspect ratio). Scores the
+    worse of the two eyes so a single blink fails the shot. Returns `None` when
+    no face is detected; ranker redistributes that axis's weight automatically.
+  Raw Laplacian variance (`blur_raw`) is also returned and used as the blur gate
+  to exclude images before Gemini is called.
 
-- **scorer.py** — Sends images to Gemini 1.5 Flash in batches. Returns
-  structured JSON per photo matching the scoring schema. Handles retries and
-  JSON parse errors gracefully.
+- **scorer.py** — Layer 2 semantic scorer. Sends sharp images to Gemini 1.5
+  Flash in batches of up to 8. Asks only for semantic attributes Gemini can
+  reliably judge: `expression`, `composition`, `subject_focus`, and `notes`.
+  Does **not** ask Gemini to assess sharpness or exposure — those are already
+  measured deterministically and Gemini cannot differentiate near-identical
+  burst shots on technical grounds. Handles retries and JSON parse errors.
 
-- **ranker.py** — Applies profile weights to Gemini scores, produces a final
-  ranked list, and prints results to stdout as JSON. CLI entry point for
-  Phase 1.
+- **ranker.py** — Merge and ranking layer. Runs deterministic scoring first
+  (doubles as blur gate), then Gemini, merges by `photo_id`, applies profile
+  weights, and outputs ranked JSON. CLI entry point for Phase 1.
 
 ---
 
-## Scoring Schema
+## Scoring Architecture
 
-Every photo gets this JSON from Gemini (scores 1–10):
+### Layer 1 — Deterministic (blur_filter.py)
+
+Computed locally for every image before any API call:
+
+| Axis | Method | What it measures |
+|---|---|---|
+| `sharpness` | Laplacian variance + Tenengrad, log-normalized to 1–10 | Combined focus and edge energy |
+| `exposure` | Histogram mean + std + clipping fractions → 1–10 | Brightness balance and dynamic range |
+| `eye_openness` | MediaPipe Face Mesh EAR, worst eye → 1–10 or `null` | Blink detection and eye engagement |
+
+`blur_raw` (raw Laplacian variance) is also computed and used as the blur gate.
+Images below `--blur-threshold` (default 100) are excluded before Gemini is called.
+
+### Layer 2 — Semantic (scorer.py, Gemini 1.5 Flash)
+
+Gemini scores only attributes requiring visual understanding — three axes:
 
 ```json
 {
   "photo_id": "img_001",
-  "sharpness": 8,
   "expression": 9,
   "composition": 7,
-  "exposure": 8,
-  "subject_focus": 9,
-  "notes": "one specific sentence — most important thing about this photo",
-  "rank": 1
+  "subject_focus": 8,
+  "notes": "one specific sentence — most important thing about this photo"
 }
 ```
 
 `notes` must be one specific, actionable sentence — not a generic description.
 
+### Merged output per photo (ranker.py)
+
+```json
+{
+  "photo_id": "img_001",
+  "sharpness": 8.4,
+  "exposure": 7.1,
+  "eye_openness": 9.2,
+  "expression": 9,
+  "composition": 7,
+  "subject_focus": 8,
+  "notes": "...",
+  "final_score": 8.31,
+  "final_rank": 1,
+  "score_breakdown": {
+    "sharpness":    {"raw": 8.4, "weight": 0.15, "effective_weight": 0.15, "contribution": 1.26, "source": "deterministic"},
+    "eye_openness": {"raw": 9.2, "weight": 0.20, "effective_weight": 0.20, "contribution": 1.84, "source": "deterministic"},
+    "expression":   {"raw": 9,   "weight": 0.25, "effective_weight": 0.25, "contribution": 2.25, "source": "gemini"},
+    "..."
+  }
+}
+```
+
+When `eye_openness` is `null` (no face detected), its weight is redistributed
+proportionally across the other five axes. The `score_breakdown` records
+`effective_weight` so the user sees exactly what contributed to the final score.
+
 ---
 
 ## Scoring Profiles
 
-Weights across five axes: `sharpness`, `expression`, `composition`, `exposure`,
-`subject_focus`. All weights in a profile must sum to 1.0.
+Six axes: `sharpness`, `exposure`, `eye_openness` (deterministic) + `expression`,
+`composition`, `subject_focus` (Gemini). All weights must sum to 1.0.
 
-| Profile | expression | subject_focus | sharpness | composition | exposure |
-|---|---|---|---|---|---|
-| family | 0.35 | 0.25 | 0.20 | 0.12 | 0.08 |
-| portrait | 0.25 | 0.25 | 0.30 | 0.05 | 0.15 |
-| event | 0.10 | 0.25 | 0.20 | 0.30 | 0.15 |
-| custom | user-defined via UI sliders | | | | |
+| Profile | eye_openness | expression | subject_focus | sharpness | composition | exposure |
+|---|---|---|---|---|---|---|
+| family | 0.20 | 0.25 | 0.20 | 0.15 | 0.12 | 0.08 |
+| portrait | 0.25 | 0.20 | 0.15 | 0.20 | 0.08 | 0.12 |
+| event | 0.10 | 0.15 | 0.20 | 0.15 | 0.25 | 0.15 |
+| custom | user-defined via UI sliders | | | | | |
 
 ---
 
@@ -143,10 +197,14 @@ Weights across five axes: `sharpness`, `expression`, `composition`, `exposure`,
 
 - **Model:** `gemini-1.5-flash`
 - **Auth:** `GEMINI_API_KEY` in `.env`
-- **Prompt strategy:** Send up to 8 images per batch request. Include the
-  scoring schema and profile context in the system prompt. Ask for a JSON array.
-- **Error handling:** On JSON parse failure, retry once with a stricter prompt.
-  On API error, surface clearly — do not silently assign zero scores.
+- **What Gemini scores:** `expression`, `composition`, `subject_focus`, `notes` only.
+  Sharpness and exposure are excluded from the Gemini prompt — Gemini cannot
+  reliably differentiate burst shots on technical quality.
+- **Prompt strategy:** Send up to 8 images per batch request. System prompt
+  explicitly tells Gemini not to assess technical sharpness or exposure.
+  Ask for a JSON array.
+- **Error handling:** On JSON parse failure, retry once. On API error, surface
+  clearly — do not silently assign zero scores.
 
 ---
 

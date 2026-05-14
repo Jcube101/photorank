@@ -1,13 +1,20 @@
 """
-Gemini 1.5 Flash vision scorer.
+Gemini 1.5 Flash semantic scorer.
 
-Sends batches of images to Gemini and returns structured per-photo scores.
-Each photo gets: sharpness, expression, composition, exposure, subject_focus (1-10),
-a one-sentence notes field, and a rank within the batch.
+Scores only the attributes that require visual understanding:
+  expression    Emotional quality, mood, facial engagement
+  composition   Framing, rule of thirds, visual balance, background
+  subject_focus Prominence and separation of the main subject
+
+Technical axes (sharpness, exposure, eye_openness) are computed
+deterministically in blur_filter.py and never sent to Gemini.
+Keeping the two layers separate prevents Gemini from being asked to
+differentiate near-identical burst shots on technical grounds — a task
+it cannot reliably perform.
 
 Usage:
   from phase1.scorer import score_photos
-  results = score_photos(["img1.jpg", "img2.jpg"], profile="family")
+  scores = score_photos(["img1.jpg", "img2.jpg"], profile="family")
 """
 
 import base64
@@ -22,96 +29,94 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BATCH_SIZE = 8
-AXES = ["sharpness", "expression", "composition", "exposure", "subject_focus"]
+BATCH_SIZE   = 8
+AXES_SEMANTIC = ["expression", "composition", "subject_focus"]
 
-SCORE_SCHEMA = """{
+_SCORE_SCHEMA = """{
   "photo_id": "<filename>",
-  "sharpness": <1-10>,
   "expression": <1-10>,
   "composition": <1-10>,
-  "exposure": <1-10>,
   "subject_focus": <1-10>,
-  "notes": "<one specific sentence — the single most important thing about this photo>",
-  "rank": <rank within this batch, 1 = best>
+  "notes": "<one specific sentence — the single most important thing about this photo>"
 }"""
 
-SYSTEM_PROMPT = """\
+_SYSTEM_PROMPT = """\
 You are a professional photo editor scoring photos for a mobile ranking tool.
-Score each photo on five axes, each 1–10:
-  - sharpness: technical focus and detail clarity
-  - expression: emotional quality, mood, facial expressions if present
-  - composition: framing, rule of thirds, visual balance, background
-  - exposure: brightness, contrast, highlight/shadow recovery
-  - subject_focus: how well the main subject is isolated and prominent
 
-For notes: write exactly one specific sentence identifying the single most
-important thing — a strength or a flaw — about this photo. Be specific and
-actionable, not generic.
+Score ONLY semantic and aesthetic attributes. Do NOT assess technical sharpness
+or exposure — those are measured separately by computer vision tools and are
+not your concern here.
 
-Return ONLY a valid JSON array, one object per photo, with no markdown fences,
-no commentary, no trailing text. Follow this schema exactly:
-""" + SCORE_SCHEMA
+Score each photo on three axes, 1–10:
+
+  expression    For photos with people: emotional quality, mood, facial
+                engagement, authenticity of expression.
+                For photos without people: overall emotional impact,
+                atmosphere, sense of life or stillness.
+                (1 = flat / lifeless, 10 = compelling / resonant)
+
+  composition   Framing, rule of thirds, leading lines, visual balance,
+                background cleanliness, horizon alignment.
+                (1 = poorly framed or distracting background,
+                 10 = expertly composed)
+
+  subject_focus How prominently and unambiguously the intended subject
+                occupies the frame; visual separation from background.
+                (1 = subject lost in the scene,
+                 10 = subject dominant and unmistakable)
+
+For notes: write exactly one sentence identifying the single most important
+strength or flaw. Be specific and actionable:
+  Good: "subject's eyes are in shadow, flattening the emotional impact"
+  Bad:  "expression could be better"
+
+Return ONLY a valid JSON array, one object per photo, no markdown fences,
+no commentary, no trailing text. Schema:
+""" + _SCORE_SCHEMA
 
 
 def _load_api_key() -> str:
     key = os.getenv("GEMINI_API_KEY")
     if not key:
-        raise EnvironmentError(
-            "GEMINI_API_KEY not set. Add it to your .env file."
-        )
+        raise EnvironmentError("GEMINI_API_KEY not set. Add it to your .env file.")
     return key
 
 
 def _encode_image(path: str | Path) -> tuple[str, str]:
-    """Return (base64_data, mime_type) for a local image file."""
-    p = Path(path)
-    ext = p.suffix.lower()
-    mime_map = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
+    p    = Path(path)
+    mime = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png",  ".webp": "image/webp",
         ".heic": "image/heic",
-    }
-    mime = mime_map.get(ext, "image/jpeg")
+    }.get(p.suffix.lower(), "image/jpeg")
     with open(p, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8"), mime
 
 
 def _build_batch_prompt(image_paths: list[str | Path]) -> list:
-    """Build Gemini content parts: interleaved labels and image data."""
     parts = []
     for i, path in enumerate(image_paths):
-        photo_id = Path(path).name
-        parts.append(f"Photo {i + 1} — photo_id: {photo_id}")
+        parts.append(f"Photo {i + 1} — photo_id: {Path(path).name}")
         data, mime = _encode_image(path)
         parts.append({"inline_data": {"mime_type": mime, "data": data}})
-    parts.append(
-        "\nScore all photos above. Return a JSON array with one object per photo."
-    )
+    parts.append("\nScore all photos above. Return a JSON array with one object per photo.")
     return parts
 
 
-def _parse_scores(raw: str, expected_ids: list[str]) -> list[dict]:
-    """Extract JSON array from Gemini response, validate fields."""
-    # Strip markdown fences if present
+def _parse_scores(raw: str) -> list[dict]:
     cleaned = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
-
-    # Find the outermost JSON array
-    start = cleaned.find("[")
-    end = cleaned.rfind("]")
+    start   = cleaned.find("[")
+    end     = cleaned.rfind("]")
     if start == -1 or end == -1:
         raise ValueError(f"No JSON array found in response:\n{raw[:500]}")
 
-    parsed = json.loads(cleaned[start : end + 1])
-
-    required = set(AXES) | {"photo_id", "notes", "rank"}
+    parsed   = json.loads(cleaned[start : end + 1])
+    required = set(AXES_SEMANTIC) | {"photo_id", "notes"}
     for item in parsed:
         missing = required - set(item.keys())
         if missing:
             raise ValueError(f"Score object missing fields {missing}: {item}")
-        for axis in AXES:
+        for axis in AXES_SEMANTIC:
             v = item[axis]
             if not isinstance(v, (int, float)) or not (1 <= v <= 10):
                 raise ValueError(f"Score out of range for {axis}: {v} in {item}")
@@ -124,22 +129,25 @@ def _score_batch(
     image_paths: list[str | Path],
     retries: int = 2,
 ) -> list[dict]:
-    """Score one batch, retry on parse failure with a stricter prompt."""
-    expected_ids = [Path(p).name for p in image_paths]
-    parts = _build_batch_prompt(image_paths)
+    parts          = _build_batch_prompt(image_paths)
+    last_error     = None
+    last_response  = ""
 
     for attempt in range(retries + 1):
         try:
-            response = model.generate_content(parts)
-            return _parse_scores(response.text, expected_ids)
+            response      = model.generate_content(parts)
+            last_response = response.text
+            return _parse_scores(response.text)
         except (ValueError, json.JSONDecodeError) as e:
-            if attempt == retries:
-                raise RuntimeError(
-                    f"Gemini scoring failed after {retries + 1} attempts: {e}\n"
-                    f"Last response: {response.text[:500]}"
-                )
-            print(f"  [scorer] parse error on attempt {attempt + 1}, retrying: {e}")
-            time.sleep(1)
+            last_error = e
+            if attempt < retries:
+                print(f"  [scorer] parse error on attempt {attempt + 1}, retrying: {e}")
+                time.sleep(1)
+
+    raise RuntimeError(
+        f"Gemini scoring failed after {retries + 1} attempts: {last_error}\n"
+        f"Last response: {last_response[:500]}"
+    )
 
 
 def score_photos(
@@ -147,14 +155,20 @@ def score_photos(
     profile: str = "family",
 ) -> list[dict]:
     """
-    Score a list of images via Gemini 1.5 Flash.
+    Score images via Gemini 1.5 Flash for semantic attributes only.
 
     Args:
-        image_paths: Paths to image files.
-        profile: Scoring profile name (for context in prompt).
+        image_paths: Full paths to images (sharp images only — blurry
+                     ones should already be excluded by blur_filter).
+        profile:     Profile name passed as context in the prompt.
 
     Returns:
-        List of score dicts, one per image, in input order.
+        List of dicts with keys: photo_id, expression, composition,
+        subject_focus, notes.
+
+    Raises:
+        EnvironmentError: GEMINI_API_KEY not set.
+        RuntimeError:     Gemini returned unparseable JSON after retries.
     """
     if not image_paths:
         return []
@@ -162,24 +176,17 @@ def score_photos(
     genai.configure(api_key=_load_api_key())
     model = genai.GenerativeModel(
         model_name="gemini-1.5-flash",
-        system_instruction=SYSTEM_PROMPT + f"\n\nScoring profile: {profile}",
+        system_instruction=_SYSTEM_PROMPT + f"\n\nScoring profile context: {profile}",
     )
 
     all_scores: list[dict] = []
-    batches = [
-        image_paths[i : i + BATCH_SIZE]
-        for i in range(0, len(image_paths), BATCH_SIZE)
-    ]
+    batches = [image_paths[i : i + BATCH_SIZE] for i in range(0, len(image_paths), BATCH_SIZE)]
 
     for batch_num, batch in enumerate(batches, 1):
-        print(
-            f"  [scorer] batch {batch_num}/{len(batches)}"
-            f" ({len(batch)} photos)..."
-        )
-        scores = _score_batch(model, batch)
-        all_scores.extend(scores)
+        print(f"  [scorer] batch {batch_num}/{len(batches)} ({len(batch)} photos)...")
+        all_scores.extend(_score_batch(model, batch))
         if batch_num < len(batches):
-            time.sleep(0.5)  # stay well under rate limits
+            time.sleep(0.5)
 
     return all_scores
 
@@ -193,12 +200,11 @@ if __name__ == "__main__":
 
     from phase1.blur_filter import collect_images
 
-    target = Path(sys.argv[1])
+    target  = Path(sys.argv[1])
     profile = "family"
     if "--profile" in sys.argv:
-        idx = sys.argv.index("--profile")
-        profile = sys.argv[idx + 1]
+        profile = sys.argv[sys.argv.index("--profile") + 1]
 
-    paths = collect_images(target) if target.is_dir() else [target]
+    paths   = collect_images(target) if target.is_dir() else [target]
     results = score_photos(paths, profile=profile)
     print(json.dumps(results, indent=2))
