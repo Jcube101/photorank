@@ -46,7 +46,7 @@ across the other five axes. This redistribution must be recorded in
 
 ## 3. Deterministic Scoring Layer
 
-**Module:** `phase1/blur_filter.py`
+**Module:** `core/score_tech.py`
 **Dependencies:** OpenCV, MediaPipe (optional — degrades gracefully)
 **Cost:** Zero. Runs entirely local.
 
@@ -150,7 +150,7 @@ processing to keep performance acceptable on a Raspberry Pi.
 
 ## 4. Gemini Semantic Scoring Layer
 
-**Module:** `phase1/scorer.py`
+**Module:** `core/score_vision.py`
 **Model:** `gemini-1.5-flash`
 **Auth:** `GEMINI_API_KEY` environment variable
 **Batch size:** Up to 8 images per request
@@ -262,7 +262,7 @@ fail the batch.
 
 ## 5. Ranker — Merge and Weight Layer
 
-**Module:** `phase1/ranker.py`
+**Module:** `core/rank.py` (profiles in `core/profiles.py`)
 
 ### 5.1 Scoring Profiles
 

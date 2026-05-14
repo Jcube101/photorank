@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# PhotoRank — input/output directories
+# Only .gitkeep is committed; actual image files and results are local only
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep
+
+# PhotoRank — temp directories created by ingest.py
+photorank_*/

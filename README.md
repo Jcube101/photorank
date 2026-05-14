@@ -56,22 +56,27 @@ cp .env.example .env
 
 ## Running
 
+Drop photos into `input/`, then:
+
 ```bash
-# Rank a folder of photos
-python phase1/ranker.py --input /path/to/photos --profile family
+# Rank photos in input/ with the family profile
+python core/rank.py --profile family
+
+# Point at a different folder
+python core/rank.py --input /path/to/photos --profile portrait
 
 # Tighten the blur gate (skip softer shots)
-python phase1/ranker.py --input /path/to/photos --profile portrait --blur-threshold 150
+python core/rank.py --profile portrait --blur-threshold 150
 
 # Custom weights (all six axes must be provided and sum to 1.0)
-python phase1/ranker.py --input /path/to/photos --profile custom \
+python core/rank.py --profile custom \
   --weights '{"sharpness":0.2,"exposure":0.1,"eye_openness":0.2,"expression":0.2,"composition":0.2,"subject_focus":0.1}'
 
-# Save output to a file
-python phase1/ranker.py --input /path/to/photos --profile family --output results.json
+# Save output to output/
+python core/rank.py --profile family --output output/results.json
 
 # Run deterministic scoring only (no Gemini call)
-python phase1/blur_filter.py /path/to/photos --threshold 100
+python core/score_tech.py input/ --threshold 100
 ```
 
 The results JSON contains every photo's rank, final score, per-axis breakdown,
@@ -96,6 +101,22 @@ See [ROADMAP.md](ROADMAP.md) for the full plan.
 Phase 1 (CLI pipeline) is in development and has not yet been validated on real
 photos. Do not use for production workflows until the Phase 1 quality gate is
 confirmed.
+
+## Folder structure
+
+```
+photorank/
+├── core/          ← scoring engine
+│   ├── ingest.py       collect, validate, compress images
+│   ├── score_tech.py   deterministic scoring (OpenCV + MediaPipe)
+│   ├── score_vision.py Gemini semantic scoring
+│   ├── rank.py         merge, weight, rank — CLI entry point
+│   └── profiles.py     all scoring profiles and weights
+├── input/         ← drop photos here before running
+├── output/        ← ranked results written here
+├── api/           ← Phase 2: FastAPI wrapper (not started)
+└── frontend/      ← Phase 3: React PWA (not started)
+```
 
 ## Contributing
 

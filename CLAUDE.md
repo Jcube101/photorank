@@ -107,10 +107,14 @@ photorank/
 ├── .env                    ← secrets (never committed)
 ├── .env.example            ← template showing required keys
 ├── requirements.txt        ← Phase 1 deps
-├── phase1/
-│   ├── blur_filter.py      ← Layer 1: deterministic technical scorer
-│   ├── scorer.py           ← Layer 2: Gemini semantic scorer
-│   └── ranker.py           ← Merge layer, profile weights, CLI entry point
+├── core/                   ← scoring engine (everything wraps this)
+│   ├── ingest.py           ← collect images, validate formats, compress to ~1.5 MP
+│   ├── score_tech.py       ← Layer 1: deterministic technical scorer
+│   ├── score_vision.py     ← Layer 2: Gemini semantic scorer
+│   ├── rank.py             ← merge layer, profile weights, CLI entry point
+│   └── profiles.py         ← single source of truth for all profiles and weights
+├── input/                  ← drop test photos here; contents git-ignored
+├── output/                 ← ranked results written here; contents git-ignored
 ├── api/
 │   └── main.py             ← Phase 2 stub — do not implement until Phase 1 gate
 └── frontend/
@@ -122,21 +126,24 @@ photorank/
 ## Phase 1 CLI — How to Run
 
 ```bash
-# Full pipeline
-python phase1/ranker.py --input /path/to/photos --profile family
+# Full pipeline (reads from input/ by default)
+python core/rank.py --profile family
+
+# Explicit input path
+python core/rank.py --input /path/to/photos --profile family
 
 # Custom weights (all six axes required)
-python phase1/ranker.py --input /path/to/photos --profile custom \
+python core/rank.py --profile custom \
   --weights '{"sharpness":0.2,"exposure":0.1,"eye_openness":0.2,"expression":0.2,"composition":0.2,"subject_focus":0.1}'
 
 # Tighten blur gate
-python phase1/ranker.py --input /path/to/photos --profile portrait --blur-threshold 150
+python core/rank.py --profile portrait --blur-threshold 150
+
+# Save output to output/
+python core/rank.py --profile family --output output/results.json
 
 # Deterministic scorer standalone (no Gemini call)
-python phase1/blur_filter.py /path/to/photos --threshold 100
-
-# Save output
-python phase1/ranker.py --input /path/to/photos --profile family --output results.json
+python core/score_tech.py input/ --threshold 100
 ```
 
 ---
@@ -236,12 +243,15 @@ These cannot be relaxed for any reason:
 
 ## Key Files to Know
 
-- `phase1/blur_filter.py:compute_technical_scores()` — single-image deterministic scoring
-- `phase1/blur_filter.py:compute_technical_scores_batch()` — batch version
-- `phase1/scorer.py:score_photos()` — Gemini semantic scoring, the abstraction point for swapping models
-- `phase1/ranker.py:rank_photos()` — merge + weight + rank
-- `phase1/ranker.py:_effective_weights()` — eye_openness null redistribution logic
-- `phase1/ranker.py:PROFILES` — all built-in profile weight dicts
+- `core/ingest.py:ingest()` — collect + validate + compress, returns (photos, temp_dir)
+- `core/ingest.py:cleanup()` — always call this after scoring; deletes temp files
+- `core/score_tech.py:compute_technical_scores()` — single-image deterministic scoring; accepts `photo_id` override
+- `core/score_tech.py:compute_technical_scores_batch()` — batch version
+- `core/score_vision.py:score_photos()` — Gemini semantic scoring; accepts `photo_ids` list; abstraction point for swapping models
+- `core/rank.py:rank_photos()` — merge + weight + rank
+- `core/rank.py:_effective_weights()` — eye_openness null redistribution logic
+- `core/profiles.py:PROFILES` — single source of truth for all profile weight dicts
+- `core/profiles.py:validate_weights()` — called on load, raises if weights don't sum to 1.0
 
 ---
 

@@ -1,20 +1,20 @@
 """
 Gemini 1.5 Flash semantic scorer.
 
-Scores only the attributes that require visual understanding:
+Scores only the three attributes that require visual understanding:
   expression    Emotional quality, mood, facial engagement
   composition   Framing, rule of thirds, visual balance, background
   subject_focus Prominence and separation of the main subject
 
 Technical axes (sharpness, exposure, eye_openness) are computed
-deterministically in blur_filter.py and never sent to Gemini.
-Keeping the two layers separate prevents Gemini from being asked to
-differentiate near-identical burst shots on technical grounds — a task
-it cannot reliably perform.
+deterministically in score_tech.py and never sent to Gemini. Keeping the
+two layers separate prevents Gemini from being asked to differentiate
+near-identical burst shots on technical grounds — a task it cannot
+reliably perform.
 
 Usage:
-  from phase1.scorer import score_photos
-  scores = score_photos(["img1.jpg", "img2.jpg"], profile="family")
+  from core.score_vision import score_photos
+  scores = score_photos(paths, photo_ids=ids, profile="family")
 """
 
 import base64
@@ -29,7 +29,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BATCH_SIZE   = 8
+BATCH_SIZE    = 8
 AXES_SEMANTIC = ["expression", "composition", "subject_focus"]
 
 _SCORE_SCHEMA = """{
@@ -93,10 +93,18 @@ def _encode_image(path: str | Path) -> tuple[str, str]:
         return base64.b64encode(f.read()).decode("utf-8"), mime
 
 
-def _build_batch_prompt(image_paths: list[str | Path]) -> list:
+def _build_batch_prompt(
+    image_paths: list[str | Path],
+    photo_ids: list[str],
+) -> list:
+    """
+    Build Gemini content parts with interleaved labels and image data.
+    photo_ids are used as labels so Gemini returns the original filenames,
+    not the compressed-file names.
+    """
     parts = []
-    for i, path in enumerate(image_paths):
-        parts.append(f"Photo {i + 1} — photo_id: {Path(path).name}")
+    for i, (path, photo_id) in enumerate(zip(image_paths, photo_ids)):
+        parts.append(f"Photo {i + 1} — photo_id: {photo_id}")
         data, mime = _encode_image(path)
         parts.append({"inline_data": {"mime_type": mime, "data": data}})
     parts.append("\nScore all photos above. Return a JSON array with one object per photo.")
@@ -127,11 +135,12 @@ def _parse_scores(raw: str) -> list[dict]:
 def _score_batch(
     model: genai.GenerativeModel,
     image_paths: list[str | Path],
+    photo_ids: list[str],
     retries: int = 2,
 ) -> list[dict]:
-    parts          = _build_batch_prompt(image_paths)
-    last_error     = None
-    last_response  = ""
+    parts         = _build_batch_prompt(image_paths, photo_ids)
+    last_error    = None
+    last_response = ""
 
     for attempt in range(retries + 1):
         try:
@@ -141,7 +150,7 @@ def _score_batch(
         except (ValueError, json.JSONDecodeError) as e:
             last_error = e
             if attempt < retries:
-                print(f"  [scorer] parse error on attempt {attempt + 1}, retrying: {e}")
+                print(f"  [score_vision] parse error on attempt {attempt + 1}, retrying: {e}")
                 time.sleep(1)
 
     raise RuntimeError(
@@ -152,19 +161,22 @@ def _score_batch(
 
 def score_photos(
     image_paths: list[str | Path],
+    photo_ids: list[str] | None = None,
     profile: str = "family",
 ) -> list[dict]:
     """
     Score images via Gemini 1.5 Flash for semantic attributes only.
 
     Args:
-        image_paths: Full paths to images (sharp images only — blurry
-                     ones should already be excluded by blur_filter).
-        profile:     Profile name passed as context in the prompt.
+        image_paths: Paths to compressed image files (output of ingest).
+        photo_ids:   Original filenames, parallel to image_paths. When provided,
+                     these are used as photo_id labels in the Gemini prompt so
+                     the returned IDs match the originals, not the compressed names.
+                     Defaults to the filename portion of each image_path.
+        profile:     Scoring profile name passed as context in the prompt.
 
     Returns:
-        List of dicts with keys: photo_id, expression, composition,
-        subject_focus, notes.
+        List of dicts: photo_id, expression, composition, subject_focus, notes.
 
     Raises:
         EnvironmentError: GEMINI_API_KEY not set.
@@ -173,6 +185,8 @@ def score_photos(
     if not image_paths:
         return []
 
+    resolved_ids = photo_ids if photo_ids is not None else [Path(p).name for p in image_paths]
+
     genai.configure(api_key=_load_api_key())
     model = genai.GenerativeModel(
         model_name="gemini-1.5-flash",
@@ -180,11 +194,14 @@ def score_photos(
     )
 
     all_scores: list[dict] = []
-    batches = [image_paths[i : i + BATCH_SIZE] for i in range(0, len(image_paths), BATCH_SIZE)]
+    batches = [
+        (image_paths[i : i + BATCH_SIZE], resolved_ids[i : i + BATCH_SIZE])
+        for i in range(0, len(image_paths), BATCH_SIZE)
+    ]
 
-    for batch_num, batch in enumerate(batches, 1):
-        print(f"  [scorer] batch {batch_num}/{len(batches)} ({len(batch)} photos)...")
-        all_scores.extend(_score_batch(model, batch))
+    for batch_num, (batch_paths, batch_ids) in enumerate(batches, 1):
+        print(f"  [score_vision] batch {batch_num}/{len(batches)} ({len(batch_paths)} photos)...")
+        all_scores.extend(_score_batch(model, batch_paths, batch_ids))
         if batch_num < len(batches):
             time.sleep(0.5)
 
@@ -193,18 +210,23 @@ def score_photos(
 
 if __name__ == "__main__":
     import sys
+    from core.ingest import ingest, cleanup
 
     if len(sys.argv) < 2:
-        print("Usage: python scorer.py <image_or_directory> [--profile family]")
+        print("Usage: python score_vision.py <directory_or_file> [--profile family]")
         sys.exit(1)
 
-    from phase1.blur_filter import collect_images
-
-    target  = Path(sys.argv[1])
     profile = "family"
     if "--profile" in sys.argv:
         profile = sys.argv[sys.argv.index("--profile") + 1]
 
-    paths   = collect_images(target) if target.is_dir() else [target]
-    results = score_photos(paths, profile=profile)
-    print(json.dumps(results, indent=2))
+    photos, tmp = ingest(sys.argv[1])
+    try:
+        results = score_photos(
+            [p["path"] for p in photos],
+            photo_ids=[p["photo_id"] for p in photos],
+            profile=profile,
+        )
+        print(json.dumps(results, indent=2))
+    finally:
+        cleanup(tmp)
