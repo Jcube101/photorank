@@ -2,3 +2,9 @@
 opencv-python-headless==4.10.0.84
 google-generativeai==0.8.3
 python-dotenv==1.0.1
+
+# MediaPipe for eye openness detection (Face Mesh EAR)
+# On Raspberry Pi (ARM): pip install mediapipe-rpi4 or mediapipe-rpi3
+# On x86/macOS/Windows: pip install mediapipe
+# Eye openness scoring degrades gracefully to None if not installed
+mediapipe==0.10.14

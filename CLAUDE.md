@@ -1,54 +1,95 @@
-# PhotoRank — Claude Source of Truth
+# PhotoRank — AI Agent Context
 
-## What This Is
+This file is for AI coding agents (Claude Code, Claude, etc.) picking up this
+project. It captures everything needed to resume work without re-explanation.
+Update it whenever a decision changes or a discovery is made.
 
-PhotoRank is a mobile-first photo ranking tool. After a day of shooting on a
-phone, you end up with 100–200 photos across multiple moments. Culling takes
-more time than most people have, so photos sit unreviewed. PhotoRank gets you
-from 200 photos to a confident, post-ready shortlist without spending an evening
-on it.
+For humans: see README.md. For precise technical contracts: see SPECS.md.
 
-**Two archetypes:**
-- **v1 (burst):** 5–20 similar burst shots of one moment. Wants the best one
-  picked and explained in under 30 seconds.
-- **v2 (full day):** 200 photos from a full day. Wants a post-ready shortlist
-  grouped by moment, best shot per group surfaced automatically.
+---
 
-**Core design principle: Verify, don't trust.** Always show score breakdown
-and reasoning — transparency is the core feature, not just accuracy.
+## Problem and Users
+
+People take 100–200 phone photos in a day and never cull them because it takes
+too long. PhotoRank does the culling automatically and explains each pick.
+
+**Two archetypes — design for both:**
+
+- **Archetype 1 (burst, v1):** Has 5–20 near-identical burst shots of one
+  moment. Wants the best one picked and explained in under 30 seconds. This
+  is the current target. The core challenge: the shots are nearly identical,
+  so Gemini alone cannot differentiate them reliably (see Learnings).
+
+- **Archetype 2 (full day, v2):** Has 200 photos from a full day across
+  multiple moments. Wants a post-ready shortlist grouped by moment, best shot
+  per group surfaced automatically. Not in scope yet — do not design for it.
+
+**Core design principle:** Verify, don't trust. Always show score breakdown
+and reasoning. Transparency is the core feature, not just accuracy. A user
+must be able to look at the breakdown and understand why a photo ranked where
+it did. Never show only a final number.
+
+---
+
+## Current State
+
+- **Phase 1 (CLI pipeline): In progress. Not yet tested on real photos.**
+- All Phase 1 code is written: `blur_filter.py`, `scorer.py`, `ranker.py`
+- Phase 1 gate: must be tested on real photos and scoring quality confirmed
+  (top pick must agree with human's top pick >80% of test sets) before any
+  Phase 2 code is written
+- Do not touch `api/main.py` or `frontend/App.jsx` until Phase 1 is confirmed
 
 ---
 
 ## Architecture
 
-| Layer | Technology | Notes |
+| Layer | Technology | Why this choice |
 |---|---|---|
-| Frontend | React PWA | Mobile-first, no App Store friction |
-| Backend | FastAPI | Runs on Raspberry Pi |
-| Tunnel | Cloudflare Tunnel | Exposes Pi endpoint publicly |
-| Auth | Cloudflare Access | Gate on the tunnel endpoint |
-| Blur filter | OpenCV Laplacian variance | Local, free, fast |
-| Vision scoring | Gemini 1.5 Flash | Near-free, strong JSON output |
-| Ranking | Python weighted scoring | Swappable profiles |
-| Storage | None (ephemeral) | Photos deleted from Pi immediately post-scoring |
-| Secrets | `.env` + python-dotenv | Never hardcoded, never committed |
+| Frontend | React PWA | No App Store friction. Mobile-first. |
+| Backend | FastAPI on Raspberry Pi | Cheap, private, already owned hardware |
+| Tunnel | Cloudflare Tunnel | Exposes Pi to internet without opening firewall ports |
+| Auth | Cloudflare Access | JWT-based, free for personal use, zero backend code needed |
+| Technical scoring | OpenCV + MediaPipe | Local, free, deterministic, fast on Pi |
+| Semantic scoring | Gemini 1.5 Flash | Near-free, reliable JSON output, strong at semantic tasks |
+| Ranking | Python weighted scoring | Simple, auditable, swappable profiles |
+| Storage | None (ephemeral) | Privacy requirement — photos deleted immediately post-scoring |
+| Secrets | `.env` + python-dotenv | Standard, never committed |
 
 ---
 
-## Build Sequence
+## Scoring Architecture — Why Two Layers
 
-Do **not** advance to the next phase until the current phase is confirmed working.
+**The core problem:** Gemini alone cannot reliably differentiate near-identical
+burst shots on technical grounds. If you send it five shots of the same moment
+taken half a second apart, it cannot tell which is sharpest or which has the
+best eye contact. It sees them as approximately equal.
 
-| Phase | Scope | Status |
-|---|---|---|
-| 1 | CLI pipeline: blur filter + Gemini scoring + ranking | In progress |
-| 2 | FastAPI on Pi wrapping Phase 1 logic | Not started |
-| 3 | Mobile-first PWA UI | Not started |
-| 4 | Client-side image compression before upload | Not started |
-| 5 | Cloudflare Access auth gate | Not started |
+**The solution:** Split scoring by what each layer can actually do:
 
-**Phase 1 gate:** Must be tested against real photos with scoring quality
-confirmed before Phase 2 begins.
+**Layer 1 — deterministic (blur_filter.py):** Objective, local, free.
+- `sharpness`: Combined Laplacian variance + Tenengrad gradient energy.
+  Both are needed — Laplacian alone is fooled by high-contrast OOF shots.
+  Log-normalized to 1–10.
+- `exposure`: Histogram analysis — mean brightness, contrast (std dev),
+  highlight/shadow clipping fractions. Normalized to 1–10.
+- `eye_openness`: MediaPipe Face Mesh EAR (eye aspect ratio). Worst of two
+  eyes scored — catches single blinks. Returns `None` if no face; ranker
+  redistributes that weight proportionally across the other five axes.
+- `blur_raw`: Raw Laplacian variance (unscaled). Used as the blur gate to
+  exclude images before Gemini is called. Default threshold: 100.
+
+**Layer 2 — semantic (scorer.py, Gemini 1.5 Flash):** Only what Gemini can
+reliably judge:
+- `expression`: Emotional quality, mood, facial engagement
+- `composition`: Framing, rule of thirds, visual balance, background
+- `subject_focus`: Prominence and separation of the main subject
+- `notes`: One specific, actionable sentence — the most important thing
+  about this photo
+
+**Gemini must never be asked about sharpness or exposure.** The prompt
+explicitly tells it not to assess those — they are measured deterministically
+and Gemini will produce meaningless noise on near-identical shots.
 
 ---
 
@@ -57,85 +98,100 @@ confirmed before Phase 2 begins.
 ```
 photorank/
 ├── CLAUDE.md               ← this file
+├── README.md               ← public-facing project overview
+├── SPECS.md                ← precise technical contracts (implement from here)
+├── ROADMAP.md              ← phased plan with explicit gates
+├── LEARNINGS.md            ← living log of discoveries that changed the approach
+├── CONTRIBUTING.md         ← contributor guide (Phase 3+)
 ├── .gitignore
 ├── .env                    ← secrets (never committed)
+├── .env.example            ← template showing required keys
 ├── requirements.txt        ← Phase 1 deps
-├── phase1/
-│   ├── blur_filter.py      ← OpenCV Laplacian blur detection
-│   ├── scorer.py           ← Gemini 1.5 Flash vision scoring
-│   └── ranker.py           ← weighted scoring + CLI entry point
+├── core/                   ← scoring engine (everything wraps this)
+│   ├── ingest.py           ← collect images, validate formats, compress to ~1.5 MP
+│   ├── score_tech.py       ← Layer 1: deterministic technical scorer
+│   ├── score_vision.py     ← Layer 2: Gemini semantic scorer
+│   ├── rank.py             ← merge layer, profile weights, CLI entry point
+│   └── profiles.py         ← single source of truth for all profiles and weights
+├── input/                  ← drop test photos here; contents git-ignored
+├── output/                 ← ranked results written here; contents git-ignored
 ├── api/
-│   └── main.py             ← Phase 2: FastAPI wrapper
+│   └── main.py             ← Phase 2 stub — do not implement until Phase 1 gate
 └── frontend/
-    └── App.jsx             ← Phase 3: React PWA
+    └── App.jsx             ← Phase 3 stub — do not implement until Phase 2 gate
 ```
 
 ---
 
-## Phase 1 CLI Pipeline
-
-### Running the pipeline
+## Phase 1 CLI — How to Run
 
 ```bash
-# Score a folder of photos, output ranked JSON
-python phase1/ranker.py --input /path/to/photos --profile family
+# Full pipeline (reads from input/ by default)
+python core/rank.py --profile family
 
-# Score with custom weights
-python phase1/ranker.py --input /path/to/photos --profile custom \
-  --weights '{"sharpness": 0.4, "expression": 0.3, "composition": 0.1, "exposure": 0.1, "subject_focus": 0.1}'
+# Explicit input path
+python core/rank.py --input /path/to/photos --profile family
 
-# Pipe through blur filter first (skips obviously blurry photos)
-python phase1/ranker.py --input /path/to/photos --profile portrait --blur-threshold 100
+# Custom weights (all six axes required)
+python core/rank.py --profile custom \
+  --weights '{"sharpness":0.2,"exposure":0.1,"eye_openness":0.2,"expression":0.2,"composition":0.2,"subject_focus":0.1}'
+
+# Tighten blur gate
+python core/rank.py --profile portrait --blur-threshold 150
+
+# Save output to output/
+python core/rank.py --profile family --output output/results.json
+
+# Deterministic scorer standalone (no Gemini call)
+python core/score_tech.py input/ --threshold 100
 ```
-
-### Module responsibilities
-
-- **blur_filter.py** — Computes Laplacian variance for each image. Returns a
-  blur score; images below the threshold are flagged/excluded before sending to
-  Gemini. Keeps costs down and prevents wasting API quota on unusable shots.
-
-- **scorer.py** — Sends images to Gemini 1.5 Flash in batches. Returns
-  structured JSON per photo matching the scoring schema. Handles retries and
-  JSON parse errors gracefully.
-
-- **ranker.py** — Applies profile weights to Gemini scores, produces a final
-  ranked list, and prints results to stdout as JSON. CLI entry point for
-  Phase 1.
-
----
-
-## Scoring Schema
-
-Every photo gets this JSON from Gemini (scores 1–10):
-
-```json
-{
-  "photo_id": "img_001",
-  "sharpness": 8,
-  "expression": 9,
-  "composition": 7,
-  "exposure": 8,
-  "subject_focus": 9,
-  "notes": "one specific sentence — most important thing about this photo",
-  "rank": 1
-}
-```
-
-`notes` must be one specific, actionable sentence — not a generic description.
 
 ---
 
 ## Scoring Profiles
 
-Weights across five axes: `sharpness`, `expression`, `composition`, `exposure`,
-`subject_focus`. All weights in a profile must sum to 1.0.
+Six axes. All weights must sum to 1.0. Raise `ValueError` on load if violated.
 
-| Profile | expression | subject_focus | sharpness | composition | exposure |
-|---|---|---|---|---|---|
-| family | 0.35 | 0.25 | 0.20 | 0.12 | 0.08 |
-| portrait | 0.25 | 0.25 | 0.30 | 0.05 | 0.15 |
-| event | 0.10 | 0.25 | 0.20 | 0.30 | 0.15 |
-| custom | user-defined via UI sliders | | | | |
+| Profile | sharpness | exposure | eye_openness | expression | composition | subject_focus |
+|---|---|---|---|---|---|---|
+| family  | 0.15 | 0.08 | 0.20 | 0.25 | 0.12 | 0.20 |
+| portrait| 0.20 | 0.12 | 0.25 | 0.20 | 0.08 | 0.15 |
+| event   | 0.15 | 0.15 | 0.10 | 0.15 | 0.25 | 0.20 |
+| custom  | user-supplied | | | | | |
+
+When `eye_openness` is `null` (no face), its weight is redistributed
+proportionally to the other five axes for that photo. `score_breakdown` records
+`effective_weight` so the redistribution is visible in the output.
+
+---
+
+## Output Schema (per photo)
+
+```json
+{
+  "photo_id":     "IMG_4821.jpg",
+  "sharpness":    7.43,
+  "exposure":     6.18,
+  "eye_openness": 8.91,
+  "expression":   8,
+  "composition":  6,
+  "subject_focus":9,
+  "notes":        "warm light catches the subject's left cheek, creating strong depth",
+  "final_score":  8.012,
+  "final_rank":   1,
+  "score_breakdown": {
+    "sharpness":    {"raw": 7.43, "weight": 0.15, "effective_weight": 0.15, "contribution": 1.114, "source": "deterministic"},
+    "exposure":     {"raw": 6.18, "weight": 0.08, "effective_weight": 0.08, "contribution": 0.494, "source": "deterministic"},
+    "eye_openness": {"raw": 8.91, "weight": 0.20, "effective_weight": 0.20, "contribution": 1.782, "source": "deterministic"},
+    "expression":   {"raw": 8,   "weight": 0.25, "effective_weight": 0.25, "contribution": 2.0,   "source": "gemini"},
+    "composition":  {"raw": 6,   "weight": 0.12, "effective_weight": 0.12, "contribution": 0.72,  "source": "gemini"},
+    "subject_focus":{"raw": 9,   "weight": 0.20, "effective_weight": 0.20, "contribution": 1.8,   "source": "gemini"}
+  }
+}
+```
+
+See SPECS.md Section 5 for the complete contract including null eye_openness
+handling and the top-level output wrapper format.
 
 ---
 
@@ -143,45 +199,66 @@ Weights across five axes: `sharpness`, `expression`, `composition`, `exposure`,
 
 - **Model:** `gemini-1.5-flash`
 - **Auth:** `GEMINI_API_KEY` in `.env`
-- **Prompt strategy:** Send up to 8 images per batch request. Include the
-  scoring schema and profile context in the system prompt. Ask for a JSON array.
-- **Error handling:** On JSON parse failure, retry once with a stricter prompt.
-  On API error, surface clearly — do not silently assign zero scores.
+- **Batch size:** Up to 8 images per request
+- **What to ask for:** `expression`, `composition`, `subject_focus`, `notes` only
+- **What NOT to ask:** sharpness, exposure, rank, any technical quality assessment
+- **On JSON parse failure:** strip markdown fences, retry once after 1s
+- **On any failure after retries:** raise — do not assign default scores
+- **Rate limit buffer:** 0.5s sleep between batches
+
+The `notes` field must be one specific, actionable sentence. The Gemini prompt
+enforces this with examples of good vs bad notes.
 
 ---
 
-## Data & Privacy
+## Data Privacy — Non-Negotiable Rules
 
-- **v1:** Photos deleted post-scoring, no logs, nothing persisted.
-- **v2 public:** Free tier — opt-in consent for training data. Paid tier — no
-  training guarantee. Consent is **explicit only, never assumed**.
-- User table must include `training_consent boolean` from first public release.
+These cannot be relaxed for any reason:
 
----
-
-## Secrets
-
-Required in `.env`:
-
-```
-GEMINI_API_KEY=your_key_here
-```
-
-Never hardcode. Never commit `.env`. The `.gitignore` already excludes it.
+1. **Photos never persist.** Delete from disk immediately after scoring,
+   before the response is returned. Use try/finally to guarantee this.
+2. **No logging of image content.** No filenames, sizes, EXIF, or pixel data
+   in any log.
+3. **No caching.** Nothing persists between requests.
+4. **Strip EXIF before external calls.** Phone photos contain GPS coordinates.
+   (Phase 2 responsibility — not yet implemented.)
+5. **Training consent is explicit.** If v2 ever collects data for training, it
+   must be behind an explicit opt-in. Never assumed from usage.
 
 ---
 
 ## Development Rules
 
-1. **No phase skipping.** Phase 1 must be confirmed working on real photos
-   before writing a single line of Phase 2.
-2. **Transparency always.** Every score shown to the user must include the
-   breakdown (per-axis scores + weights) and the Gemini notes. Never show only
-   a final number.
-3. **Photos never persist.** Delete uploaded photos immediately after scoring.
-   This is a hard requirement, not a nice-to-have.
-4. **Weights sum to 1.0.** Validate this on load; raise clearly if violated.
-5. **No silent failures.** If Gemini returns bad JSON or errors, surface it
-   loudly. Don't assign default scores.
-6. **Test with real photos.** Synthetic test data is not a substitute for
-   confirming scoring quality on actual phone photos.
+1. **No phase skipping.** Not a suggestion. Phase 1 must be confirmed on real
+   photos before a single line of Phase 2 is written.
+2. **Transparency always.** Every score must include the full breakdown. Never
+   surface only a final number.
+3. **No silent failures.** If Gemini fails, surface it loudly. No default scores.
+4. **Weights must sum to 1.0.** Validate on load. Raise clearly if violated.
+5. **Test with real photos.** Synthetic data does not validate scoring quality.
+6. **Update LEARNINGS.md** when real-photo testing reveals something unexpected.
+7. **Update this file** when architectural decisions change.
+
+---
+
+## Key Files to Know
+
+- `core/ingest.py:ingest()` — collect + validate + compress, returns (photos, temp_dir)
+- `core/ingest.py:cleanup()` — always call this after scoring; deletes temp files
+- `core/score_tech.py:compute_technical_scores()` — single-image deterministic scoring; accepts `photo_id` override
+- `core/score_tech.py:compute_technical_scores_batch()` — batch version
+- `core/score_vision.py:score_photos()` — Gemini semantic scoring; accepts `photo_ids` list; abstraction point for swapping models
+- `core/rank.py:rank_photos()` — merge + weight + rank
+- `core/rank.py:_effective_weights()` — eye_openness null redistribution logic
+- `core/profiles.py:PROFILES` — single source of truth for all profile weight dicts
+- `core/profiles.py:validate_weights()` — called on load, raises if weights don't sum to 1.0
+
+---
+
+## Secrets
+
+```
+GEMINI_API_KEY=your_key_here
+```
+
+Never hardcode. Never commit `.env`. `.env.example` shows the required keys.
