@@ -1,7 +1,7 @@
 """
 Deterministic technical quality scorer using OpenCV.
 
-Three metrics computed locally — no API cost, no network, always deterministic:
+Two metrics computed locally — no API cost, no network, always deterministic:
 
   sharpness    Combined Laplacian variance + Tenengrad gradient energy → 1–10
                Calibrated for ~1.5 MP images (post-ingest compression).
@@ -11,17 +11,14 @@ Three metrics computed locally — no API cost, no network, always deterministic
   exposure     Histogram analysis: mean brightness, contrast (std dev),
                highlight and shadow clipping fractions → 1–10.
 
-  eye_openness Stubbed at 5.0 (neutral). MediaPipe is not available on
-               Raspberry Pi ARM64. Replace this stub when an alternative
-               blink/eye-openness method is found (dlib, InsightFace, or
-               a lightweight OpenCV Haar cascade).
-               rank.py treats any non-None value as a real score, so the
-               stub participates in weighting normally — profiles that
-               heavily weight eye_openness will be less useful until this
-               is implemented.
+blur_raw (raw Laplacian variance, unscaled) and tenengrad_raw are also returned
+on every result dict. rank.py uses blur_raw as the blur gate to exclude images
+before Gemini is called. tenengrad_raw is logged for diagnostic visibility.
 
-blur_raw (raw Laplacian variance, unscaled) is also returned on every result
-dict. rank.py uses it as the blur gate to exclude images before Gemini is called.
+eye_openness is not implemented. MediaPipe is unavailable on Raspberry Pi ARM64.
+See LEARNINGS.md for candidate alternatives (dlib, InsightFace, OpenCV Haar
+cascade). eye_openness has been removed from all scoring profiles until a
+Pi-compatible implementation is found.
 
 Usage:
   from core.score_tech import compute_technical_scores, compute_technical_scores_batch
@@ -48,19 +45,22 @@ def _tenengrad(gray: np.ndarray) -> float:
 # Normalised scoring functions — all return float in [1.0, 10.0]
 # ---------------------------------------------------------------------------
 
-def score_sharpness(gray: np.ndarray) -> float:
+def score_sharpness(gray: np.ndarray) -> tuple[float, float, float]:
     """
-    Combined Laplacian + Tenengrad → 1–10.
+    Combined Laplacian + Tenengrad → 1–10, plus raw values.
 
-    Reference ceiling values (calibrated for ~1.5 MP phone photos):
-      Laplacian var ~400   → score ≈ 9.0
-      Tenengrad mean ~2500 → score ≈ 9.0
+    Ceiling values calibrated for sharp phone photos at ~1.5 MP:
+      Laplacian var  ~2000  → score ≈ 9.0
+      Tenengrad mean ~12000 → score ≈ 9.0
+
+    Returns (sharpness_score, lap_raw, ten_raw).
     """
     lap       = _laplacian_var(gray)
     ten       = _tenengrad(gray)
-    lap_score = 1.0 + 9.0 * math.log1p(lap) / math.log1p(400)
-    ten_score = 1.0 + 9.0 * math.log1p(ten) / math.log1p(2500)
-    return round(min(10.0, max(1.0, (lap_score + ten_score) / 2.0)), 2)
+    lap_score = 1.0 + 9.0 * math.log1p(lap) / math.log1p(2000)
+    ten_score = 1.0 + 9.0 * math.log1p(ten) / math.log1p(12000)
+    score     = round(min(10.0, max(1.0, (lap_score + ten_score) / 2.0)), 2)
+    return score, round(lap, 2), round(ten, 2)
 
 
 def score_exposure(gray: np.ndarray) -> float:
@@ -84,21 +84,6 @@ def score_exposure(gray: np.ndarray) -> float:
     return round(min(10.0, max(1.0, combined)), 2)
 
 
-def score_eye_openness(_bgr: np.ndarray) -> float:
-    """
-    Stub — returns neutral 5.0 for all images.
-
-    MediaPipe is not available on Raspberry Pi ARM64. Replace with a real
-    implementation (dlib shape predictor, InsightFace, or OpenCV Haar cascade)
-    once a Pi-compatible library is identified.
-
-    Returning 5.0 rather than None keeps the eye_openness axis active in
-    weighting (no weight redistribution) so output scores are comparable when
-    the real implementation ships.
-    """
-    return 5.0
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -117,12 +102,12 @@ def compute_technical_scores(
 
     Returns:
         {
-            "photo_id":     str,          — filename or override
-            "path":         str,          — image_path as string
-            "sharpness":    float,        — 1–10
-            "exposure":     float,        — 1–10
-            "eye_openness": float,        — 1–10 (5.0 stub until Pi-compatible detector ships)
-            "blur_raw":     float,        — raw Laplacian variance (blur gate input)
+            "photo_id":      str,   — filename or override
+            "path":          str,   — image_path as string
+            "sharpness":     float, — 1–10
+            "exposure":      float, — 1–10
+            "blur_raw":      float, — raw Laplacian variance (blur gate input)
+            "tenengrad_raw": float, — raw Tenengrad mean (diagnostic)
         }
     """
     p   = Path(image_path)
@@ -130,16 +115,16 @@ def compute_technical_scores(
     if bgr is None:
         raise ValueError(f"Could not read image: {p}")
 
-    gray     = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    blur_raw = _laplacian_var(gray)
+    gray                          = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    sharpness, blur_raw, ten_raw  = score_sharpness(gray)
 
     return {
-        "photo_id":     photo_id if photo_id is not None else p.name,
-        "path":         str(p),
-        "sharpness":    score_sharpness(gray),
-        "exposure":     score_exposure(gray),
-        "eye_openness": score_eye_openness(bgr),
-        "blur_raw":     round(blur_raw, 2),
+        "photo_id":      photo_id if photo_id is not None else p.name,
+        "path":          str(p),
+        "sharpness":     sharpness,
+        "exposure":      score_exposure(gray),
+        "blur_raw":      blur_raw,
+        "tenengrad_raw": ten_raw,
     }
 
 

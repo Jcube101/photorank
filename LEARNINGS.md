@@ -81,4 +81,35 @@ differentiated results until this is resolved.
 
 ---
 
+**Discovery:** Sharpness normalization ceilings were too low for real phone photos at 1.5 MP.
+**Impact:** All 11 test photos scored 10.0 on sharpness, providing zero differentiation. The
+original ceiling of Laplacian 400 / Tenengrad 2500 was calibrated for lower-resolution images.
+Sharp phone photos at 1.5 MP routinely exceed those thresholds. Raised to Laplacian 2000 /
+Tenengrad 12000 to restore meaningful spread. Added `tenengrad_raw` to the output dict so raw
+values are visible for future calibration.
+**Date:** 2026-05-15
+
+---
+
+**Discovery:** eye_openness stub returning 5.0 for every photo is dead weight, not neutral.
+**Impact:** A constant 5.0 across all photos contributes nothing to differentiation but still
+consumes 20–25% of the profile weight (depending on profile). Removed eye_openness from all
+profiles entirely. Original weights redistributed proportionally: family expression 0.25→0.31,
+portrait sharpness/expression both 0.20→0.27, event composition 0.25→0.28. The axis will be
+re-added when a Pi ARM64-compatible implementation is found.
+**Date:** 2026-05-15
+
+---
+
+**Discovery:** Gemini clusters semantic scores in the 5–7 range when given no relative anchor.
+**Impact:** Without explicit instruction to rank photos against each other, Gemini treats each
+photo in isolation and gravitates to the middle of the scale. Added relative-ranking instruction
+to the system prompt ("rank these against each other, not an abstract standard") with explicit
+spread requirements (at least one 8+, at least one <5 per axis). Added a `relative_rank` field
+(1 = best) that Gemini assigns as a holistic tiebreaker, used in rank.py when final_score values
+are equal.
+**Date:** 2026-05-15
+
+---
+
 *Add new entries above this line as discoveries are made.*

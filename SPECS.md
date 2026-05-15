@@ -32,15 +32,13 @@ places). Higher is always better.
 |---|---|---|---|
 | `sharpness` | deterministic | float | No |
 | `exposure` | deterministic | float | No |
-| `eye_openness` | deterministic | float \| null | Yes — when no face detected |
 | `expression` | gemini | int | No |
 | `composition` | gemini | int | No |
 | `subject_focus` | gemini | int | No |
 
-`eye_openness` is `null` (JSON null / Python None) when MediaPipe finds no
-face in the image. The ranker redistributes its profile weight proportionally
-across the other five axes. This redistribution must be recorded in
-`effective_weight` in the output so the user can see it happened.
+`eye_openness` has been removed from all profiles. MediaPipe is not available
+on Raspberry Pi ARM64. Original weights have been redistributed proportionally
+across the remaining five axes. See LEARNINGS.md for candidate replacements.
 
 ---
 
@@ -67,10 +65,10 @@ gy  = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
 ten = np.mean(gx**2 + gy**2)
 ```
 
-**Normalization** (log scale, calibrated for phone photos):
+**Normalization** (log scale, calibrated for sharp phone photos at ~1.5 MP):
 ```
-lap_score = 1.0 + 9.0 * log1p(lap) / log1p(400)
-ten_score = 1.0 + 9.0 * log1p(ten) / log1p(2500)
+lap_score = 1.0 + 9.0 * log1p(lap) / log1p(2000)
+ten_score = 1.0 + 9.0 * log1p(ten) / log1p(12000)
 sharpness = clamp((lap_score + ten_score) / 2, 1.0, 10.0)
 ```
 
@@ -78,9 +76,9 @@ Reference calibration:
 | Laplacian var | Tenengrad mean | Expected sharpness |
 |---|---|---|
 | ~20 | ~80 | ~2–3 (blurry) |
-| ~100 | ~400 | ~5–6 (acceptable) |
-| ~300 | ~1500 | ~7–8 (sharp) |
-| ~600+ | ~3000+ | ~9–10 (very sharp) |
+| ~200 | ~1000 | ~5–6 (acceptable) |
+| ~800 | ~5000 | ~7–8 (sharp) |
+| ~2000+ | ~12000+ | ~9–10 (very sharp) |
 
 `blur_raw` (raw Laplacian variance, unscaled) is also returned and used as the
 blur gate. Images where `blur_raw < blur_threshold` are excluded before Gemini
@@ -104,54 +102,28 @@ clip_penalty     = (highlight_clip + shadow_clip) * 40.0
 exposure         = clamp(brightness_score*0.5 + contrast_score*0.5 - clip_penalty, 1.0, 10.0)
 ```
 
-### 3.3 Eye Openness
-
-**Requires:** MediaPipe Face Mesh. Returns `null` if not installed or no face found.
-
-**Landmark sets** (6-point EAR per eye):
-```python
-LEFT_EYE  = [33,  160, 158, 133, 153, 144]
-RIGHT_EYE = [362, 385, 387, 263, 373, 380]
-```
-
-**Eye Aspect Ratio (EAR)**:
-```
-pts = [(lm[i].x * w, lm[i].y * h) for i in indices]
-EAR = (dist(pts[1], pts[5]) + dist(pts[2], pts[4])) / (2 * dist(pts[0], pts[3]))
-```
-
-Use `min(left_EAR, right_EAR)` — scores the worse eye. A single blink fails
-the shot.
-
-**Normalization** (calibrated: 0.10 = closed, 0.30 = fully open):
-```
-eye_openness = clamp(1.0 + 9.0 * (EAR - 0.10) / 0.20, 1.0, 10.0)
-```
-
-Images are downscaled to max 640px on the longest dimension before MediaPipe
-processing to keep performance acceptable on a Raspberry Pi.
-
-### 3.4 Output Format (single image)
+### 3.3 Output Format (single image)
 
 ```json
 {
-  "photo_id":     "IMG_4821.jpg",
-  "path":         "/tmp/upload/IMG_4821.jpg",
-  "sharpness":    7.43,
-  "exposure":     6.18,
-  "eye_openness": 8.91,
-  "blur_raw":     218.44
+  "photo_id":      "IMG_4821.jpg",
+  "path":          "/tmp/upload/IMG_4821.jpg",
+  "sharpness":     7.43,
+  "exposure":      6.18,
+  "blur_raw":      218.44,
+  "tenengrad_raw": 4821.33
 }
 ```
 
-`eye_openness` is `null` when no face is detected.
+`blur_raw` (Laplacian variance) is used as the blur gate. `tenengrad_raw` is
+logged for diagnostic visibility when investigating sharpness scores.
 
 ---
 
 ## 4. Gemini Semantic Scoring Layer
 
 **Module:** `core/score_vision.py`
-**Model:** `gemini-1.5-flash`
+**Model:** `gemini-2.0-flash` (override via `GEMINI_MODEL` env var)
 **Auth:** `GEMINI_API_KEY` environment variable
 **Batch size:** Up to 8 images per request
 
@@ -230,17 +202,19 @@ Gemini must return a JSON array. Each element:
 
 ```json
 {
-  "photo_id":     "IMG_4821.jpg",
-  "expression":   8,
-  "composition":  6,
-  "subject_focus":9,
-  "notes":        "warm light catches the subject's left cheek, creating strong depth"
+  "photo_id":      "IMG_4821.jpg",
+  "expression":    8,
+  "composition":   6,
+  "subject_focus": 9,
+  "relative_rank": 1,
+  "notes":         "warm light catches the subject's left cheek, creating strong depth"
 }
 ```
 
 **Validation rules:**
-- All four keys must be present
+- All five keys must be present
 - `expression`, `composition`, `subject_focus` must be integers (or floats) in [1, 10]
+- `relative_rank` must be a unique integer in [1, batch_size] — 1 = best overall
 - `notes` must be a non-empty string
 - `photo_id` must match a filename in the batch
 
@@ -266,74 +240,53 @@ fail the batch.
 
 ### 5.1 Scoring Profiles
 
-All six axes must be present in every profile. Weights must sum to 1.0
+All five axes must be present in every profile. Weights must sum to 1.0
 (tolerance ±0.001). Raise `ValueError` on load if violated.
 
-| Profile | sharpness | exposure | eye_openness | expression | composition | subject_focus |
-|---|---|---|---|---|---|---|
-| `family`  | 0.15 | 0.08 | 0.20 | 0.25 | 0.12 | 0.20 |
-| `portrait`| 0.20 | 0.12 | 0.25 | 0.20 | 0.08 | 0.15 |
-| `event`   | 0.15 | 0.15 | 0.10 | 0.15 | 0.25 | 0.20 |
-| `custom`  | user-supplied | | | | | |
+`eye_openness` has been removed from all profiles (MediaPipe unavailable on
+ARM64). Original weights were redistributed proportionally.
 
-### 5.2 Eye Openness Weight Redistribution
+| Profile | sharpness | exposure | expression | composition | subject_focus |
+|---|---|---|---|---|---|
+| `family`  | 0.19 | 0.10 | 0.31 | 0.15 | 0.25 |
+| `portrait`| 0.27 | 0.16 | 0.27 | 0.10 | 0.20 |
+| `event`   | 0.17 | 0.16 | 0.17 | 0.28 | 0.22 |
+| `custom`  | user-supplied | | | | |
 
-When `eye_openness` is `null` for a photo, its weight is redistributed
-proportionally across the remaining five axes before scoring that photo.
-This is per-photo — other photos in the same run are unaffected.
-
-```python
-remaining = {k: v for k, v in weights.items() if k != "eye_openness"}
-total     = sum(remaining.values())
-effective = {k: v * (1.0 + eye_w / total) for k, v in remaining.items()}
-```
-
-### 5.3 Final Score
+### 5.2 Final Score
 
 ```
-final_score = sum(score[axis] * effective_weight[axis] for axis in active_axes)
+final_score = sum(score[axis] * weight[axis] for axis in ALL_AXES)
 ```
 
-Rounded to 3 decimal places.
+Rounded to 3 decimal places. When two photos have equal `final_score`,
+`relative_rank` (from Gemini) is used as a tiebreaker — lower is better.
 
-### 5.4 Output Format (per photo)
+### 5.3 Output Format (per photo)
 
 ```json
 {
-  "photo_id":     "IMG_4821.jpg",
-  "sharpness":    7.43,
-  "exposure":     6.18,
-  "eye_openness": 8.91,
-  "expression":   8,
-  "composition":  6,
-  "subject_focus":9,
-  "notes":        "warm light catches the subject's left cheek, creating strong depth",
-  "final_score":  8.012,
-  "final_rank":   1,
+  "photo_id":      "IMG_4821.jpg",
+  "sharpness":     7.43,
+  "exposure":      6.18,
+  "expression":    8,
+  "composition":   6,
+  "subject_focus": 9,
+  "relative_rank": 1,
+  "notes":         "warm light catches the subject's left cheek, creating strong depth",
+  "final_score":   7.973,
+  "final_rank":    1,
   "score_breakdown": {
-    "sharpness":    {"raw": 7.43, "weight": 0.15, "effective_weight": 0.15, "contribution": 1.114, "source": "deterministic"},
-    "exposure":     {"raw": 6.18, "weight": 0.08, "effective_weight": 0.08, "contribution": 0.494, "source": "deterministic"},
-    "eye_openness": {"raw": 8.91, "weight": 0.20, "effective_weight": 0.20, "contribution": 1.782, "source": "deterministic"},
-    "expression":   {"raw": 8,   "weight": 0.25, "effective_weight": 0.25, "contribution": 2.0,   "source": "gemini"},
-    "composition":  {"raw": 6,   "weight": 0.12, "effective_weight": 0.12, "contribution": 0.72,  "source": "gemini"},
-    "subject_focus":{"raw": 9,   "weight": 0.20, "effective_weight": 0.20, "contribution": 1.8,   "source": "gemini"}
+    "sharpness":    {"raw": 7.43, "weight": 0.19, "effective_weight": 0.19, "contribution": 1.412, "source": "deterministic"},
+    "exposure":     {"raw": 6.18, "weight": 0.10, "effective_weight": 0.10, "contribution": 0.618, "source": "deterministic"},
+    "expression":   {"raw": 8,   "weight": 0.31, "effective_weight": 0.31, "contribution": 2.48,  "source": "gemini"},
+    "composition":  {"raw": 6,   "weight": 0.15, "effective_weight": 0.15, "contribution": 0.90,  "source": "gemini"},
+    "subject_focus":{"raw": 9,   "weight": 0.25, "effective_weight": 0.25, "contribution": 2.25,  "source": "gemini"}
   }
 }
 ```
 
-When `eye_openness` is null, `score_breakdown.eye_openness` includes:
-```json
-{
-  "raw": null,
-  "weight": 0.20,
-  "effective_weight": 0,
-  "contribution": 0,
-  "source": "deterministic",
-  "note": "no face detected — weight redistributed"
-}
-```
-
-### 5.5 Top-Level Output
+### 5.4 Top-Level Output
 
 ```json
 {
@@ -364,7 +317,7 @@ Rank a batch of photos.
 |---|---|---|---|
 | `files` | file[] | Yes | 1–50 images in accepted formats |
 | `profile` | string | Yes | `family`, `portrait`, `event`, or `custom` |
-| `weights` | string (JSON) | If `custom` | JSON object with all six axes summing to 1.0 |
+| `weights` | string (JSON) | If `custom` | JSON object with all five axes summing to 1.0 |
 | `blur_threshold` | float | No | Default 100.0 |
 
 **Response 200** — application/json:
@@ -377,7 +330,7 @@ before the response is sent, regardless of success or failure.
 | Status | Condition |
 |---|---|
 | 400 | Invalid profile name |
-| 422 | Weights JSON malformed, missing axes, or doesn't sum to 1.0 |
+| 422 | Weights JSON malformed, missing axes (five required), or doesn't sum to 1.0 |
 | 413 | Any single file exceeds 10 MB |
 | 415 | Unsupported image format |
 | 500 | Gemini API failure (after retries) — includes raw error message |
@@ -419,7 +372,8 @@ These rules apply in every phase and cannot be relaxed:
 
 | Variable | Required | Notes |
 |---|---|---|
-| `GEMINI_API_KEY` | Yes | Gemini 1.5 Flash API key |
+| `GEMINI_API_KEY` | Yes | Gemini API key |
+| `GEMINI_MODEL`   | No  | Model name (default: `gemini-2.0-flash`) |
 
 Loaded via `python-dotenv` from `.env` in the project root. Never hardcoded,
 never committed. `.env` is in `.gitignore`.

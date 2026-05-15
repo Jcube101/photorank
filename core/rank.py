@@ -2,20 +2,22 @@
 CLI entry point for the PhotoRank scoring pipeline.
 
 Pipeline:
-  1. ingest     — collect images from source, validate, compress to ~1.5 MP
-  2. score_tech — deterministic scoring (sharpness, exposure, eye_openness, blur_raw)
-  3. blur gate  — exclude images below blur_raw threshold before Gemini is called
-  4. score_vision — Gemini semantic scoring (expression, composition, subject_focus)
-  5. merge      — combine layers by photo_id
-  6. rank       — apply profile weights, redistribute eye_openness when no face found
-  7. output     — ranked JSON to stdout or --output file
-  8. cleanup    — delete temp directory (satisfies photo-deletion privacy requirement)
+  1. ingest       — collect images from source, validate, compress to ~1.5 MP
+  2. score_tech   — deterministic scoring (sharpness, exposure, blur_raw, tenengrad_raw)
+  3. blur gate    — exclude images below blur_raw threshold before Gemini is called
+  4. score_vision — Gemini semantic scoring (expression, composition, subject_focus,
+                    relative_rank)
+  5. merge        — combine layers by photo_id
+  6. rank         — apply profile weights, sort by final_score desc with
+                    relative_rank as tiebreaker
+  7. output       — ranked JSON to stdout or --output file
+  8. cleanup      — delete temp directory (satisfies photo-deletion privacy requirement)
 
 Usage:
   python core/rank.py --profile family
   python core/rank.py --input /path/to/photos --profile portrait --blur-threshold 80
   python core/rank.py --profile custom \\
-      --weights '{"sharpness":0.2,"exposure":0.1,"eye_openness":0.2,"expression":0.2,"composition":0.2,"subject_focus":0.1}'
+      --weights '{"sharpness":0.2,"exposure":0.1,"expression":0.25,"composition":0.2,"subject_focus":0.25}'
   python core/rank.py --profile family --output output/results.json
 """
 
@@ -27,34 +29,16 @@ from pathlib import Path
 from core.profiles import ALL_AXES, AXES_DETERMINISTIC, PROFILES, validate_weights
 
 
-def _effective_weights(
-    weights: dict[str, float],
-    eye_openness: float | None,
-) -> dict[str, float]:
-    """
-    Redistribute eye_openness weight proportionally across the other axes
-    when no face was detected. Per-photo — other photos are unaffected.
-    """
-    if eye_openness is not None or "eye_openness" not in weights:
-        return weights
-    eye_w     = weights["eye_openness"]
-    remaining = {k: v for k, v in weights.items() if k != "eye_openness"}
-    total     = sum(remaining.values())
-    if total == 0:
-        return remaining
-    return {k: v * (1.0 + eye_w / total) for k, v in remaining.items()}
-
-
 def _merge(technical: dict, gemini: dict) -> dict:
     """Combine deterministic and Gemini score dicts for one photo."""
     return {
         "photo_id":      technical["photo_id"],
         "sharpness":     technical["sharpness"],
         "exposure":      technical["exposure"],
-        "eye_openness":  technical["eye_openness"],
         "expression":    gemini["expression"],
         "composition":   gemini["composition"],
         "subject_focus": gemini["subject_focus"],
+        "relative_rank": gemini["relative_rank"],
         "notes":         gemini["notes"],
     }
 
@@ -64,30 +48,30 @@ def rank_photos(
     weights: dict[str, float],
 ) -> list[dict]:
     """
-    Apply profile weights to merged scores. Returns list sorted by final_score desc.
-    eye_openness weight is redistributed per-photo when no face was detected.
+    Apply profile weights to merged scores. Returns list sorted by final_score desc,
+    with relative_rank (from Gemini) as a tiebreaker.
     """
     validate_weights(weights)
 
     for s in merged_scores:
-        eff = _effective_weights(weights, s["eye_openness"])
         s["final_score"] = round(
-            sum(s[axis] * eff[axis] for axis in eff if s.get(axis) is not None), 3
+            sum(s[axis] * weights[axis] for axis in ALL_AXES), 3
         )
         s["score_breakdown"] = {
             axis: {
-                "raw":              s.get(axis),
-                "weight":           weights.get(axis, 0),
-                "effective_weight": round(eff.get(axis, 0), 4),
-                "contribution":     round(s[axis] * eff[axis], 3) if s.get(axis) is not None else 0,
+                "raw":              s[axis],
+                "weight":           weights[axis],
+                "effective_weight": weights[axis],
+                "contribution":     round(s[axis] * weights[axis], 3),
                 "source":           "deterministic" if axis in AXES_DETERMINISTIC else "gemini",
             }
             for axis in ALL_AXES
         }
-        if s["eye_openness"] is None:
-            s["score_breakdown"]["eye_openness"]["note"] = "no face detected — weight redistributed"
 
-    ranked = sorted(merged_scores, key=lambda x: x["final_score"], reverse=True)
+    ranked = sorted(
+        merged_scores,
+        key=lambda x: (-x["final_score"], x.get("relative_rank", 999)),
+    )
     for i, s in enumerate(ranked, 1):
         s["final_rank"] = i
 
@@ -97,10 +81,9 @@ def rank_photos(
 def _print_summary(ranked: list[dict], blurry_ids: list[str]) -> None:
     print("\n=== PhotoRank Results ===\n", file=sys.stderr)
     for photo in ranked:
-        eye_tag = " [no face]" if photo["eye_openness"] is None else ""
         print(
             f"  #{photo['final_rank']:>2}  {photo['photo_id']:<40}"
-            f"  score={photo['final_score']:.3f}{eye_tag}  — {photo['notes']}",
+            f"  score={photo['final_score']:.3f}  — {photo['notes']}",
             file=sys.stderr,
         )
     if blurry_ids:
@@ -129,8 +112,8 @@ def main() -> None:
         "--weights", "-w",
         default=None,
         help=(
-            "JSON weights for --profile custom. All six axes required: "
-            "sharpness, exposure, eye_openness, expression, composition, subject_focus"
+            "JSON weights for --profile custom. All five axes required: "
+            "sharpness, exposure, expression, composition, subject_focus"
         ),
     )
     parser.add_argument(
@@ -181,7 +164,7 @@ def main() -> None:
 
     try:
         # Step 2: deterministic scoring — photo_id override keeps original filenames
-        print("[rank] computing technical scores (sharpness / exposure / eye openness)...", file=sys.stderr)
+        print("[rank] computing technical scores (sharpness / exposure)...", file=sys.stderr)
         all_technical: list[dict] = []
         for photo in photos:
             try:
