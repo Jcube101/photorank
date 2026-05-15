@@ -29,6 +29,13 @@ PROFILES: dict[str, dict[str, float]] = {
         "sharpness":     0.17,
         "exposure":      0.16,
     },
+    "travel": {
+        "composition":   0.35,
+        "subject_focus": 0.25,
+        "sharpness":     0.20,
+        "exposure":      0.15,
+        "expression":    0.05,
+    },
 }
 
 
