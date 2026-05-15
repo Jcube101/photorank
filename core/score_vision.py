@@ -1,5 +1,5 @@
 """
-Gemini 1.5 Flash semantic scorer.
+Gemini semantic scorer.
 
 Scores only the three attributes that require visual understanding:
   expression    Emotional quality, mood, facial engagement
@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+GEMINI_MODEL  = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 BATCH_SIZE    = 8
 AXES_SEMANTIC = ["expression", "composition", "subject_focus"]
 
@@ -189,7 +190,7 @@ def score_photos(
 
     genai.configure(api_key=_load_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
+        model_name=GEMINI_MODEL,
         system_instruction=_SYSTEM_PROMPT + f"\n\nScoring profile context: {profile}",
     )
 
