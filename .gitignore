@@ -227,3 +227,4 @@ output/*
 
 # PhotoRank — temp directories created by ingest.py
 photorank_*/
+venv/
