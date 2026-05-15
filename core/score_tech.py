@@ -1,5 +1,5 @@
 """
-Deterministic technical quality scorer using OpenCV and MediaPipe.
+Deterministic technical quality scorer using OpenCV.
 
 Three metrics computed locally — no API cost, no network, always deterministic:
 
@@ -11,9 +11,14 @@ Three metrics computed locally — no API cost, no network, always deterministic
   exposure     Histogram analysis: mean brightness, contrast (std dev),
                highlight and shadow clipping fractions → 1–10.
 
-  eye_openness MediaPipe Face Mesh EAR (eye aspect ratio) → 1–10.
-               Returns None if no face detected or MediaPipe not installed.
-               rank.py redistributes this axis's weight when None.
+  eye_openness Stubbed at 5.0 (neutral). MediaPipe is not available on
+               Raspberry Pi ARM64. Replace this stub when an alternative
+               blink/eye-openness method is found (dlib, InsightFace, or
+               a lightweight OpenCV Haar cascade).
+               rank.py treats any non-None value as a real score, so the
+               stub participates in weighting normally — profiles that
+               heavily weight eye_openness will be less useful until this
+               is implemented.
 
 blur_raw (raw Laplacian variance, unscaled) is also returned on every result
 dict. rank.py uses it as the blur gate to exclude images before Gemini is called.
@@ -24,30 +29,10 @@ Usage:
 
 import math
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
 
-try:
-    import mediapipe as mp
-    _MP = mp.solutions.face_mesh
-    _MEDIAPIPE_AVAILABLE = True
-except ImportError:
-    _MEDIAPIPE_AVAILABLE = False
-
-
-# 6-point EAR landmark indices (MediaPipe Face Mesh)
-# Order per eye: [outer_corner, upper_a, upper_b, inner_corner, lower_a, lower_b]
-_LEFT_EYE  = [33,  160, 158, 133, 153, 144]
-_RIGHT_EYE = [362, 385, 387, 263, 373, 380]
-
-_MP_MAX_DIM = 640  # downscale cap for MediaPipe — sufficient for face detection
-
-
-# ---------------------------------------------------------------------------
-# Internal signal functions (operate on pre-loaded numpy arrays)
-# ---------------------------------------------------------------------------
 
 def _laplacian_var(gray: np.ndarray) -> float:
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
@@ -57,15 +42,6 @@ def _tenengrad(gray: np.ndarray) -> float:
     gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
     gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
     return float(np.mean(gx ** 2 + gy ** 2))
-
-
-def _ear(landmarks, indices: list[int], img_w: int, img_h: int) -> float:
-    """Eye Aspect Ratio: (vertical_a + vertical_b) / (2 × horizontal)."""
-    pts = [(landmarks[i].x * img_w, landmarks[i].y * img_h) for i in indices]
-    v1  = math.dist(pts[1], pts[5])
-    v2  = math.dist(pts[2], pts[4])
-    h   = math.dist(pts[0], pts[3])
-    return (v1 + v2) / (2.0 * h) if h > 0 else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -108,48 +84,19 @@ def score_exposure(gray: np.ndarray) -> float:
     return round(min(10.0, max(1.0, combined)), 2)
 
 
-def score_eye_openness(bgr: np.ndarray) -> Optional[float]:
+def score_eye_openness(_bgr: np.ndarray) -> float:
     """
-    MediaPipe Face Mesh EAR → 1–10.
+    Stub — returns neutral 5.0 for all images.
 
-    Returns None when MediaPipe is not installed or no face is detected.
-    Scores the worse (more-closed) eye so a single blink fails the shot.
+    MediaPipe is not available on Raspberry Pi ARM64. Replace with a real
+    implementation (dlib shape predictor, InsightFace, or OpenCV Haar cascade)
+    once a Pi-compatible library is identified.
 
-    EAR calibration:
-      ~0.10 (closed / blinking) → 1.0
-      ~0.20 (half open)         → 5.5
-      ~0.30 (fully open)        → 10.0
+    Returning 5.0 rather than None keeps the eye_openness axis active in
+    weighting (no weight redistribution) so output scores are comparable when
+    the real implementation ships.
     """
-    if not _MEDIAPIPE_AVAILABLE:
-        return None
-
-    h, w = bgr.shape[:2]
-    if max(h, w) > _MP_MAX_DIM:
-        scale      = _MP_MAX_DIM / max(h, w)
-        small      = cv2.resize(bgr, (int(w * scale), int(h * scale)))
-        sw, sh     = small.shape[1], small.shape[0]
-    else:
-        small, sw, sh = bgr, w, h
-
-    rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-    with _MP.FaceMesh(
-        static_image_mode=True,
-        max_num_faces=1,
-        refine_landmarks=True,
-        min_detection_confidence=0.5,
-    ) as face_mesh:
-        result = face_mesh.process(rgb)
-
-    if not result.multi_face_landmarks:
-        return None
-
-    lm        = result.multi_face_landmarks[0].landmark
-    left_ear  = _ear(lm, _LEFT_EYE,  sw, sh)
-    right_ear = _ear(lm, _RIGHT_EYE, sw, sh)
-    worst_ear = min(left_ear, right_ear)
-
-    score = 1.0 + 9.0 * (worst_ear - 0.10) / 0.20
-    return round(min(10.0, max(1.0, score)), 2)
+    return 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +121,7 @@ def compute_technical_scores(
             "path":         str,          — image_path as string
             "sharpness":    float,        — 1–10
             "exposure":     float,        — 1–10
-            "eye_openness": float | None, — 1–10 or None
+            "eye_openness": float,        — 1–10 (5.0 stub until Pi-compatible detector ships)
             "blur_raw":     float,        — raw Laplacian variance (blur gate input)
         }
     """
