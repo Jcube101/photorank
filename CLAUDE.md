@@ -159,7 +159,14 @@ weights redistributed proportionally). All weights must sum to 1.0. Raise
 | family  | 0.19 | 0.10 | 0.31 | 0.15 | 0.25 |
 | portrait| 0.27 | 0.16 | 0.27 | 0.10 | 0.20 |
 | event   | 0.17 | 0.16 | 0.17 | 0.28 | 0.22 |
+| travel  | 0.20 | 0.15 | 0.05 | 0.35 | 0.25 |
 | custom  | user-supplied | | | | |
+
+`travel` is for landscape and travel portrait shots where the background is
+intentionally part of the composition. Composition is weighted highest (0.35).
+Expression is minimal (0.05) — subject looking away or at scenery is acceptable.
+The Gemini prompt includes a travel-specific hint instructing it not to penalise
+prominent backgrounds and to reward subject-background harmony.
 
 ---
 

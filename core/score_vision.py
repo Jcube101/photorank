@@ -93,6 +93,17 @@ no commentary, no trailing text. Schema:
 """ + _SCORE_SCHEMA
 
 
+_PROFILE_HINTS: dict[str, str] = {
+    "travel": (
+        "This is a travel portrait. The background scenery is intentionally "
+        "part of the composition — do not penalise photos for having a prominent "
+        "background. Score composition highly when the subject and background "
+        "work together harmoniously. Expression is less important — the subject "
+        "looking away or at the scenery is acceptable and often desirable."
+    ),
+}
+
+
 def _load_api_key() -> str:
     key = os.getenv("GEMINI_API_KEY")
     if not key:
@@ -210,9 +221,13 @@ def score_photos(
     resolved_ids = photo_ids if photo_ids is not None else [Path(p).name for p in image_paths]
 
     genai.configure(api_key=_load_api_key())
+    profile_hint = _PROFILE_HINTS.get(profile, "")
+    system_instruction = _SYSTEM_PROMPT + f"\n\nScoring profile context: {profile}"
+    if profile_hint:
+        system_instruction += f"\n\n{profile_hint}"
     model = genai.GenerativeModel(
         model_name=GEMINI_MODEL,
-        system_instruction=_SYSTEM_PROMPT + f"\n\nScoring profile context: {profile}",
+        system_instruction=system_instruction,
     )
 
     all_scores: list[dict] = []

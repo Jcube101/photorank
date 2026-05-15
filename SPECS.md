@@ -251,7 +251,15 @@ ARM64). Original weights were redistributed proportionally.
 | `family`  | 0.19 | 0.10 | 0.31 | 0.15 | 0.25 |
 | `portrait`| 0.27 | 0.16 | 0.27 | 0.10 | 0.20 |
 | `event`   | 0.17 | 0.16 | 0.17 | 0.28 | 0.22 |
+| `travel`  | 0.20 | 0.15 | 0.05 | 0.35 | 0.25 |
 | `custom`  | user-supplied | | | | |
+
+**travel profile:** For landscape and travel portrait shots where the background
+is intentionally part of the composition. Composition is the dominant axis (0.35).
+Expression is minimal (0.05) — the subject looking away or at the scenery is
+acceptable and often desirable. The Gemini system prompt for this profile includes
+an additional hint: do not penalise prominent backgrounds; reward subject-background
+harmony; treat off-camera gaze as a positive.
 
 ### 5.2 Final Score
 
@@ -316,7 +324,7 @@ Rank a batch of photos.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `files` | file[] | Yes | 1–50 images in accepted formats |
-| `profile` | string | Yes | `family`, `portrait`, `event`, or `custom` |
+| `profile` | string | Yes | `family`, `portrait`, `event`, `travel`, or `custom` |
 | `weights` | string (JSON) | If `custom` | JSON object with all five axes summing to 1.0 |
 | `blur_threshold` | float | No | Default 100.0 |
 
