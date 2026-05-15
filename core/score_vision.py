@@ -6,11 +6,13 @@ Scores only the three attributes that require visual understanding:
   composition   Framing, rule of thirds, visual balance, background
   subject_focus Prominence and separation of the main subject
 
-Technical axes (sharpness, exposure, eye_openness) are computed
-deterministically in score_tech.py and never sent to Gemini. Keeping the
-two layers separate prevents Gemini from being asked to differentiate
-near-identical burst shots on technical grounds — a task it cannot
-reliably perform.
+Technical axes (sharpness, exposure) are computed deterministically in
+score_tech.py and never sent to Gemini. Keeping the two layers separate
+prevents Gemini from being asked to differentiate near-identical burst shots
+on technical grounds — a task it cannot reliably perform.
+
+Gemini also returns a relative_rank (1 = best) used as a tiebreaker in rank.py
+when final_score values are equal.
 
 Usage:
   from core.score_vision import score_photos
@@ -38,6 +40,7 @@ _SCORE_SCHEMA = """{
   "expression": <1-10>,
   "composition": <1-10>,
   "subject_focus": <1-10>,
+  "relative_rank": <integer, 1=best overall>,
   "notes": "<one specific sentence — the single most important thing about this photo>"
 }"""
 
@@ -47,6 +50,15 @@ You are a professional photo editor scoring photos for a mobile ranking tool.
 Score ONLY semantic and aesthetic attributes. Do NOT assess technical sharpness
 or exposure — those are measured separately by computer vision tools and are
 not your concern here.
+
+CRITICAL: You are ranking these photos AGAINST EACH OTHER, not against an
+abstract standard. Your scores MUST spread across the full 1–10 range:
+  - At least one photo must score 8 or higher on each axis
+  - At least one photo must score below 5 on each axis
+  - Do NOT cluster scores in the 5–7 range — clustering defeats the purpose
+    of ranking and makes results useless for selecting the best photo
+  - Think of the best photo in the set as your 8–10 anchor, and score the
+    rest relative to it
 
 Score each photo on three axes, 1–10:
 
@@ -65,6 +77,11 @@ Score each photo on three axes, 1–10:
                 occupies the frame; visual separation from background.
                 (1 = subject lost in the scene,
                  10 = subject dominant and unmistakable)
+
+Include a relative_rank field: rank all photos from best to worst across all
+three axes combined (1 = best overall, 2 = second best, etc.). Each photo must
+have a unique rank. Break ties by which photo you would choose to keep if you
+could only keep one.
 
 For notes: write exactly one sentence identifying the single most important
 strength or flaw. Be specific and actionable:
@@ -112,7 +129,7 @@ def _build_batch_prompt(
     return parts
 
 
-def _parse_scores(raw: str) -> list[dict]:
+def _parse_scores(raw: str, expected_count: int) -> list[dict]:
     cleaned = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
     start   = cleaned.find("[")
     end     = cleaned.rfind("]")
@@ -120,7 +137,7 @@ def _parse_scores(raw: str) -> list[dict]:
         raise ValueError(f"No JSON array found in response:\n{raw[:500]}")
 
     parsed   = json.loads(cleaned[start : end + 1])
-    required = set(AXES_SEMANTIC) | {"photo_id", "notes"}
+    required = set(AXES_SEMANTIC) | {"photo_id", "relative_rank", "notes"}
     for item in parsed:
         missing = required - set(item.keys())
         if missing:
@@ -129,6 +146,9 @@ def _parse_scores(raw: str) -> list[dict]:
             v = item[axis]
             if not isinstance(v, (int, float)) or not (1 <= v <= 10):
                 raise ValueError(f"Score out of range for {axis}: {v} in {item}")
+        rr = item["relative_rank"]
+        if not isinstance(rr, int) or rr < 1 or rr > expected_count:
+            raise ValueError(f"relative_rank out of range: {rr} in {item}")
 
     return parsed
 
@@ -147,7 +167,7 @@ def _score_batch(
         try:
             response      = model.generate_content(parts)
             last_response = response.text
-            return _parse_scores(response.text)
+            return _parse_scores(response.text, len(image_paths))
         except (ValueError, json.JSONDecodeError) as e:
             last_error = e
             if attempt < retries:
@@ -166,7 +186,7 @@ def score_photos(
     profile: str = "family",
 ) -> list[dict]:
     """
-    Score images via Gemini 1.5 Flash for semantic attributes only.
+    Score images via Gemini for semantic attributes only.
 
     Args:
         image_paths: Paths to compressed image files (output of ingest).
@@ -177,7 +197,8 @@ def score_photos(
         profile:     Scoring profile name passed as context in the prompt.
 
     Returns:
-        List of dicts: photo_id, expression, composition, subject_focus, notes.
+        List of dicts: photo_id, expression, composition, subject_focus,
+        relative_rank, notes.
 
     Raises:
         EnvironmentError: GEMINI_API_KEY not set.

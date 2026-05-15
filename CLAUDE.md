@@ -132,9 +132,9 @@ python core/rank.py --profile family
 # Explicit input path
 python core/rank.py --input /path/to/photos --profile family
 
-# Custom weights (all six axes required)
+# Custom weights (all five axes required)
 python core/rank.py --profile custom \
-  --weights '{"sharpness":0.2,"exposure":0.1,"eye_openness":0.2,"expression":0.2,"composition":0.2,"subject_focus":0.1}'
+  --weights '{"sharpness":0.2,"exposure":0.1,"expression":0.25,"composition":0.2,"subject_focus":0.25}'
 
 # Tighten blur gate
 python core/rank.py --profile portrait --blur-threshold 150
@@ -150,18 +150,16 @@ python core/score_tech.py input/ --threshold 100
 
 ## Scoring Profiles
 
-Six axes. All weights must sum to 1.0. Raise `ValueError` on load if violated.
+Five axes (eye_openness removed — MediaPipe unavailable on ARM64, original
+weights redistributed proportionally). All weights must sum to 1.0. Raise
+`ValueError` on load if violated.
 
-| Profile | sharpness | exposure | eye_openness | expression | composition | subject_focus |
-|---|---|---|---|---|---|---|
-| family  | 0.15 | 0.08 | 0.20 | 0.25 | 0.12 | 0.20 |
-| portrait| 0.20 | 0.12 | 0.25 | 0.20 | 0.08 | 0.15 |
-| event   | 0.15 | 0.15 | 0.10 | 0.15 | 0.25 | 0.20 |
-| custom  | user-supplied | | | | | |
-
-When `eye_openness` is `null` (no face), its weight is redistributed
-proportionally to the other five axes for that photo. `score_breakdown` records
-`effective_weight` so the redistribution is visible in the output.
+| Profile | sharpness | exposure | expression | composition | subject_focus |
+|---|---|---|---|---|---|
+| family  | 0.19 | 0.10 | 0.31 | 0.15 | 0.25 |
+| portrait| 0.27 | 0.16 | 0.27 | 0.10 | 0.20 |
+| event   | 0.17 | 0.16 | 0.17 | 0.28 | 0.22 |
+| custom  | user-supplied | | | | |
 
 ---
 
@@ -169,39 +167,37 @@ proportionally to the other five axes for that photo. `score_breakdown` records
 
 ```json
 {
-  "photo_id":     "IMG_4821.jpg",
-  "sharpness":    7.43,
-  "exposure":     6.18,
-  "eye_openness": 8.91,
-  "expression":   8,
-  "composition":  6,
-  "subject_focus":9,
-  "notes":        "warm light catches the subject's left cheek, creating strong depth",
-  "final_score":  8.012,
-  "final_rank":   1,
+  "photo_id":      "IMG_4821.jpg",
+  "sharpness":     7.43,
+  "exposure":      6.18,
+  "expression":    8,
+  "composition":   6,
+  "subject_focus": 9,
+  "relative_rank": 1,
+  "notes":         "warm light catches the subject's left cheek, creating strong depth",
+  "final_score":   8.012,
+  "final_rank":    1,
   "score_breakdown": {
-    "sharpness":    {"raw": 7.43, "weight": 0.15, "effective_weight": 0.15, "contribution": 1.114, "source": "deterministic"},
-    "exposure":     {"raw": 6.18, "weight": 0.08, "effective_weight": 0.08, "contribution": 0.494, "source": "deterministic"},
-    "eye_openness": {"raw": 8.91, "weight": 0.20, "effective_weight": 0.20, "contribution": 1.782, "source": "deterministic"},
-    "expression":   {"raw": 8,   "weight": 0.25, "effective_weight": 0.25, "contribution": 2.0,   "source": "gemini"},
-    "composition":  {"raw": 6,   "weight": 0.12, "effective_weight": 0.12, "contribution": 0.72,  "source": "gemini"},
-    "subject_focus":{"raw": 9,   "weight": 0.20, "effective_weight": 0.20, "contribution": 1.8,   "source": "gemini"}
+    "sharpness":    {"raw": 7.43, "weight": 0.19, "effective_weight": 0.19, "contribution": 1.412, "source": "deterministic"},
+    "exposure":     {"raw": 6.18, "weight": 0.10, "effective_weight": 0.10, "contribution": 0.618, "source": "deterministic"},
+    "expression":   {"raw": 8,   "weight": 0.31, "effective_weight": 0.31, "contribution": 2.48,  "source": "gemini"},
+    "composition":  {"raw": 6,   "weight": 0.15, "effective_weight": 0.15, "contribution": 0.90,  "source": "gemini"},
+    "subject_focus":{"raw": 9,   "weight": 0.25, "effective_weight": 0.25, "contribution": 2.25,  "source": "gemini"}
   }
 }
 ```
 
-See SPECS.md Section 5 for the complete contract including null eye_openness
-handling and the top-level output wrapper format.
+See SPECS.md Section 5 for the complete contract and top-level output wrapper format.
 
 ---
 
 ## Gemini Integration
 
-- **Model:** `gemini-1.5-flash`
+- **Model:** `gemini-2.0-flash` (override via `GEMINI_MODEL` in `.env`)
 - **Auth:** `GEMINI_API_KEY` in `.env`
 - **Batch size:** Up to 8 images per request
-- **What to ask for:** `expression`, `composition`, `subject_focus`, `notes` only
-- **What NOT to ask:** sharpness, exposure, rank, any technical quality assessment
+- **What to ask for:** `expression`, `composition`, `subject_focus`, `relative_rank`, `notes`
+- **What NOT to ask:** sharpness, exposure, any technical quality assessment
 - **On JSON parse failure:** strip markdown fences, retry once after 1s
 - **On any failure after retries:** raise — do not assign default scores
 - **Rate limit buffer:** 0.5s sleep between batches

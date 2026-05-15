@@ -3,34 +3,31 @@ Single source of truth for scoring profiles, axis definitions, and weight valida
 No profile weights are defined anywhere else in the codebase.
 """
 
-AXES_DETERMINISTIC = ["sharpness", "exposure", "eye_openness"]
+AXES_DETERMINISTIC = ["sharpness", "exposure"]
 AXES_SEMANTIC      = ["expression", "composition", "subject_focus"]
 ALL_AXES           = AXES_DETERMINISTIC + AXES_SEMANTIC
 
 PROFILES: dict[str, dict[str, float]] = {
     "family": {
-        "expression":    0.25,
-        "eye_openness":  0.20,
-        "subject_focus": 0.20,
-        "sharpness":     0.15,
-        "composition":   0.12,
-        "exposure":      0.08,
+        "expression":    0.31,
+        "subject_focus": 0.25,
+        "sharpness":     0.19,
+        "composition":   0.15,
+        "exposure":      0.10,
     },
     "portrait": {
-        "eye_openness":  0.25,
-        "sharpness":     0.20,
-        "expression":    0.20,
-        "subject_focus": 0.15,
-        "exposure":      0.12,
-        "composition":   0.08,
+        "sharpness":     0.27,
+        "expression":    0.27,
+        "subject_focus": 0.20,
+        "exposure":      0.16,
+        "composition":   0.10,
     },
     "event": {
-        "composition":   0.25,
-        "subject_focus": 0.20,
-        "expression":    0.15,
-        "sharpness":     0.15,
-        "exposure":      0.15,
-        "eye_openness":  0.10,
+        "composition":   0.28,
+        "subject_focus": 0.22,
+        "expression":    0.17,
+        "sharpness":     0.17,
+        "exposure":      0.16,
     },
 }
 
