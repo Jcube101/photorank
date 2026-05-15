@@ -68,4 +68,17 @@ history, no re-scoring, no "here are your results from last time."
 
 ---
 
+**Discovery:** MediaPipe is not available for Raspberry Pi ARM64. The official
+package does not ship ARM64 wheels, and community builds (mediapipe-rpi4) are
+unmaintained and incompatible with current Python versions.
+**Impact:** Eye openness detection is stubbed at a neutral 5.0 until a
+Pi-compatible alternative is found. Candidates: dlib shape predictor (requires
+a compiled .dat model file), InsightFace (heavier but has ARM builds),
+or a lightweight OpenCV Haar cascade for eye detection. Profiles that heavily
+weight `eye_openness` (portrait: 0.25, family: 0.20) will produce less
+differentiated results until this is resolved.
+**Date:** 2026-05-15
+
+---
+
 *Add new entries above this line as discoveries are made.*
