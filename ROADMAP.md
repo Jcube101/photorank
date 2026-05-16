@@ -5,7 +5,7 @@ condition is met and confirmed on real photos.
 
 ---
 
-## Phase 1 — CLI Pipeline (current)
+## Phase 1 — CLI Pipeline ✓ COMPLETE
 
 **Goal:** A working, quality-verified scoring pipeline that can be run from the
 terminal on a folder of real phone photos.
@@ -39,20 +39,20 @@ Gemini is only called on photos that pass the blur gate.
 - Moment grouping
 
 **Definition of done:**
-- [ ] Burst mode: run against at least three real burst sets (2–6 photos). Top pick
+- [x] Burst mode: run against at least three real burst sets (2–6 photos). Top pick
       agrees with human's top pick in >80% of test sets
-- [ ] Set mode: run against at least three varied sets (7–20 photos). Top pick
+- [x] Set mode: run against at least three varied sets (7–20 photos). Top pick
       agrees with human's top pick in >80% of test sets
-- [ ] Score breakdown explains the ranking in a way that makes sense to a
+- [x] Score breakdown explains the ranking in a way that makes sense to a
       non-technical reviewer
-- [ ] Exposure scoring correctly penalises blown highlights and underexposed shots
-- [ ] LEARNINGS.md updated with anything surprising from real-photo testing
+- [x] Exposure scoring correctly penalises blown highlights and underexposed shots
+- [x] LEARNINGS.md updated with anything surprising from real-photo testing
 
-**Phase 1 gate:** All definition-of-done items confirmed before any Phase 2 code is written.
+**Phase 1 gate:** ✓ Passed — both modes validated against real photos. Phase 2 may begin.
 
 ---
 
-## Phase 2 — FastAPI + Raspberry Pi Deployment
+## Phase 2 — FastAPI + Raspberry Pi Deployment (current)
 
 **Goal:** The Phase 1 pipeline accessible from a phone via a URL.
 

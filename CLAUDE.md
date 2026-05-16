@@ -33,13 +33,11 @@ it did. Never show only a final number.
 
 ## Current State
 
-- **Phase 1 (CLI pipeline): In progress. Not yet tested on real photos.**
+- **Phase 1 (CLI pipeline): Complete. Validated on real photos.**
+- **Phase 2 (FastAPI + Pi deployment): In progress — next focus.**
 - Two-mode pipeline: `--mode burst` (deterministic only) and `--mode set` (default, Gemini)
-- All Phase 1 code is written: `score_tech.py`, `score_burst.py`, `score_vision.py`, `rank.py`
-- Phase 1 gate: must be tested on real photos and scoring quality confirmed
-  (top pick must agree with human's top pick >80% of test sets) before any
-  Phase 2 code is written
-- Do not touch `api/main.py` or `frontend/App.jsx` until Phase 1 is confirmed
+- Phase 1 gate passed: both modes validated, top pick agreement >80% on real test sets
+- `api/main.py` and `frontend/App.jsx` are now unblocked for Phase 2 work
 
 ---
 
@@ -51,8 +49,8 @@ it did. Never show only a final number.
 | Backend | FastAPI on Raspberry Pi | Cheap, private, already owned hardware |
 | Tunnel | Cloudflare Tunnel | Exposes Pi to internet without opening firewall ports |
 | Auth | Cloudflare Access | JWT-based, free for personal use, zero backend code needed |
-| Technical scoring | OpenCV + MediaPipe | Local, free, deterministic, fast on Pi |
-| Semantic scoring | Gemini 1.5 Flash | Near-free, reliable JSON output, strong at semantic tasks |
+| Technical scoring | OpenCV (Haar cascade) | Local, free, deterministic, fast on Pi — MediaPipe removed (no ARM64 wheels) |
+| Semantic scoring | Gemini 2.0 Flash | Near-free, reliable JSON output, strong at semantic tasks |
 | Ranking | Python weighted scoring | Simple, auditable, swappable profiles |
 | Storage | None (ephemeral) | Privacy requirement — photos deleted immediately post-scoring |
 | Secrets | `.env` + python-dotenv | Standard, never committed |
@@ -129,7 +127,7 @@ photorank/
 ├── input/                  ← drop test photos here; contents git-ignored
 ├── output/                 ← ranked results written here; contents git-ignored
 ├── api/
-│   └── main.py             ← Phase 2 stub — do not implement until Phase 1 gate
+│   └── main.py             ← Phase 2 — FastAPI wrapper (in progress)
 └── frontend/
     └── App.jsx             ← Phase 3 stub — do not implement until Phase 2 gate
 ```
@@ -151,9 +149,9 @@ python core/rank.py --profile family
 # Explicit input path
 python core/rank.py --input /path/to/photos --profile family
 
-# Custom weights (all five axes required)
+# Custom weights (all six axes required)
 python core/rank.py --profile custom \
-  --weights '{"sharpness":0.2,"exposure":0.1,"expression":0.25,"composition":0.2,"subject_focus":0.25}'
+  --weights '{"sharpness":0.2,"exposure":0.1,"expression":0.25,"composition":0.2,"subject_focus":0.2,"camera_engagement":0.05}'
 
 # Tighten blur gate
 python core/rank.py --profile portrait --blur-threshold 150
@@ -169,9 +167,9 @@ python core/score_tech.py input/ --threshold 100
 
 ## Scoring Profiles
 
-Five axes (eye_openness removed — MediaPipe unavailable on ARM64, original
-weights redistributed proportionally). All weights must sum to 1.0. Raise
-`ValueError` on load if violated.
+Six axes. All weights must sum to 1.0. Raise `ValueError` on load if violated.
+(`eye_openness` removed — MediaPipe unavailable on ARM64; `camera_engagement`
+added as a Gemini-scored axis, weighted 0.00 in profiles that don't use it.)
 
 | Profile | sharpness | exposure | expression | camera_engagement | composition | subject_focus |
 |---|---|---|---|---|---|---|
@@ -194,30 +192,35 @@ prominent backgrounds and to reward subject-background harmony.
 
 ---
 
-## Output Schema (per photo)
+## Output Schema (per photo, set mode, family profile)
 
 ```json
 {
-  "photo_id":      "IMG_4821.jpg",
-  "sharpness":     7.43,
-  "exposure":      6.18,
-  "expression":    8,
-  "composition":   6,
-  "subject_focus": 9,
-  "relative_rank": 1,
-  "notes":         "warm light catches the subject's left cheek, creating strong depth",
-  "final_score":   8.012,
-  "final_rank":    1,
+  "photo_id":             "IMG_4821.jpg",
+  "sharpness":            7.43,
+  "exposure":             6.18,
+  "subject_1_expression": 8,
+  "subject_2_expression": 6,
+  "expression":           6.7,
+  "camera_engagement":    9,
+  "composition":          6,
+  "subject_focus":        9,
+  "relative_rank":        1,
+  "notes":                "warm light on subject 1 but subject 2's eyes are slightly closed",
+  "final_score":          7.841,
+  "final_rank":           1,
   "score_breakdown": {
-    "sharpness":    {"raw": 7.43, "weight": 0.19, "effective_weight": 0.19, "contribution": 1.412, "source": "deterministic"},
-    "exposure":     {"raw": 6.18, "weight": 0.10, "effective_weight": 0.10, "contribution": 0.618, "source": "deterministic"},
-    "expression":   {"raw": 8,   "weight": 0.31, "effective_weight": 0.31, "contribution": 2.48,  "source": "gemini"},
-    "composition":  {"raw": 6,   "weight": 0.15, "effective_weight": 0.15, "contribution": 0.90,  "source": "gemini"},
-    "subject_focus":{"raw": 9,   "weight": 0.25, "effective_weight": 0.25, "contribution": 2.25,  "source": "gemini"}
+    "sharpness":          {"raw": 7.43, "weight": 0.19, "effective_weight": 0.19, "contribution": 1.412, "source": "deterministic"},
+    "exposure":           {"raw": 6.18, "weight": 0.06, "effective_weight": 0.06, "contribution": 0.371, "source": "deterministic"},
+    "expression":         {"raw": 6.7,  "weight": 0.25, "effective_weight": 0.25, "contribution": 1.675, "source": "gemini"},
+    "camera_engagement":  {"raw": 9,    "weight": 0.20, "effective_weight": 0.20, "contribution": 1.800, "source": "gemini"},
+    "composition":        {"raw": 6,    "weight": 0.10, "effective_weight": 0.10, "contribution": 0.600, "source": "gemini"},
+    "subject_focus":      {"raw": 9,    "weight": 0.20, "effective_weight": 0.20, "contribution": 1.800, "source": "gemini"}
   }
 }
 ```
 
+`expression` is computed from per-subject scores: `lower * 0.65 + upper * 0.35`.
 See SPECS.md Section 5 for the complete contract and top-level output wrapper format.
 
 ---
@@ -227,7 +230,7 @@ See SPECS.md Section 5 for the complete contract and top-level output wrapper fo
 - **Model:** `gemini-2.0-flash` (override via `GEMINI_MODEL` in `.env`)
 - **Auth:** `GEMINI_API_KEY` in `.env`
 - **Batch size:** Up to 8 images per request
-- **What to ask for:** `expression`, `composition`, `subject_focus`, `relative_rank`, `notes`
+- **What to ask for:** `subject_1_expression`, `subject_2_expression`, `camera_engagement`, `composition`, `subject_focus`, `relative_rank`, `notes` (Python computes `expression` from per-subject values)
 - **What NOT to ask:** sharpness, exposure, any technical quality assessment
 - **On JSON parse failure:** strip markdown fences, retry once after 1s
 - **On any failure after retries:** raise — do not assign default scores
@@ -256,8 +259,8 @@ These cannot be relaxed for any reason:
 
 ## Development Rules
 
-1. **No phase skipping.** Not a suggestion. Phase 1 must be confirmed on real
-   photos before a single line of Phase 2 is written.
+1. **No phase skipping.** Phase 1 is complete. Phase 2 is the current focus.
+   Phase 3 (PWA) does not start until Phase 2 is confirmed on real device.
 2. **Transparency always.** Every score must include the full breakdown. Never
    surface only a final number.
 3. **No silent failures.** If Gemini fails, surface it loudly. No default scores.
