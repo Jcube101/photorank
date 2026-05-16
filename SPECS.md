@@ -5,6 +5,27 @@ It is precise enough to implement any layer independently.
 
 ---
 
+## 0. Two Scoring Modes
+
+PhotoRank operates in two modes selected via `--mode` in rank.py:
+
+| Mode | Flag | Use case | Gemini? | Speed |
+|---|---|---|---|---|
+| burst | `--mode burst` | 2–6 near-identical photos, same moment | No | Fast, zero API cost |
+| set | `--mode set` (default) | 7+ photos, varied content | Yes | ~2–5 s/photo |
+
+**Burst mode** uses only deterministic signals from `core/score_burst.py`:
+full-image sharpness and exposure (from `score_tech.py`) plus face-region
+sharpness and exposure via OpenCV Haar cascade face detection. BURST_WEIGHTS
+are fixed: `face_sharpness 0.50 / sharpness 0.20 / face_exposure 0.20 / exposure 0.10`.
+
+**Set mode** uses the full two-layer pipeline: deterministic pre-filter
+(blur gate) then Gemini semantic scoring with profile weights.
+
+The mode is selected by the user. No auto-detection is performed.
+
+---
+
 ## 1. Accepted Image Formats
 
 | Format | MIME type | Notes |
@@ -126,6 +147,89 @@ exposure         = clamp(brightness_score*0.5 + contrast_score*0.5 - clip_penalt
 
 `blur_raw` (Laplacian variance) is used as the blur gate. `tenengrad_raw` is
 logged for diagnostic visibility when investigating sharpness scores.
+
+---
+
+## 3b. Burst Mode Scoring Layer
+
+**Module:** `core/score_burst.py`
+**Used by:** `--mode burst` only
+**Dependencies:** OpenCV (Haar cascade, already a dependency)
+
+Extends the deterministic layer with face-region signals. Face detection uses
+`haarcascade_frontalface_default.xml` (bundled with `opencv-python-headless`).
+
+### Face Detection
+
+```python
+cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+faces   = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+face    = max(faces, key=lambda f: f[2] * f[3])  # largest face by area
+```
+
+If no face is detected, `face_sharpness` and `face_exposure` fall back to their
+full-image equivalents. `face_detected: false` is set in the output.
+
+### Face Sharpness
+
+Laplacian variance on the face crop only (no Tenengrad — crop is small):
+
+```
+face_blur_raw  = cv2.Laplacian(face_gray, cv2.CV_64F).var()
+face_sharpness = clamp(1.0 + 9.0 * log1p(face_blur_raw) / log1p(2000), 1.0, 10.0)
+```
+
+### Face Exposure
+
+Full `score_exposure` formula applied to the face crop (grayscale crop passed
+to the same function used for full-image exposure).
+
+### Burst Weights (fixed, not profile-configurable)
+
+| Axis | Weight |
+|---|---|
+| `face_sharpness` | 0.50 |
+| `sharpness` | 0.20 |
+| `face_exposure` | 0.20 |
+| `exposure` | 0.10 |
+
+### Burst Output Format (per photo)
+
+```json
+{
+  "photo_id":       "IMG_4821.jpg",
+  "sharpness":      7.43,
+  "exposure":       6.18,
+  "blur_raw":       218.44,
+  "tenengrad_raw":  4821.33,
+  "face_detected":  true,
+  "face_sharpness": 8.12,
+  "face_exposure":  6.54,
+  "face_blur_raw":  312.7,
+  "final_score":    7.84,
+  "final_rank":     1,
+  "score_breakdown": {
+    "face_sharpness": {"raw": 8.12, "weight": 0.50, "contribution": 4.06, "source": "deterministic (face crop)"},
+    "sharpness":      {"raw": 7.43, "weight": 0.20, "contribution": 1.49, "source": "deterministic"},
+    "face_exposure":  {"raw": 6.54, "weight": 0.20, "contribution": 1.31, "source": "deterministic (face crop)"},
+    "exposure":       {"raw": 6.18, "weight": 0.10, "contribution": 0.62, "source": "deterministic"}
+  }
+}
+```
+
+### Top-Level Burst Output
+
+```json
+{
+  "mode":           "burst",
+  "burst_weights":  {"face_sharpness": 0.50, "sharpness": 0.20, "face_exposure": 0.20, "exposure": 0.10},
+  "blur_threshold": 100.0,
+  "total_photos":   4,
+  "scored_photos":  4,
+  "skipped_blurry": 0,
+  "ranked":         [/* per-photo objects sorted by final_rank */]
+}
+```
 
 ---
 

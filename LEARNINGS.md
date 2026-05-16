@@ -101,6 +101,18 @@ re-added when a Pi ARM64-compatible implementation is found.
 
 ---
 
+**Discovery:** Gemini consistently fails to differentiate true burst shots (same moment, <10 seconds apart, near-identical framing).
+**Impact:** Scores cluster identically across all photos in a burst regardless of prompt engineering.
+Vision LLMs are not suitable as the primary differentiator for true bursts — the visual difference
+between two burst frames is below Gemini's perceptual resolution. Two-mode architecture introduced:
+`--mode burst` uses deterministic face-region scoring only (sharpness and exposure on the face crop,
+not the full image); `--mode set` uses deterministic pre-filter + Gemini for semantic scoring.
+Face-region signals matter because full-image sharpness can be identical across a burst even when
+one frame has the face perfectly sharp and another has it slightly soft.
+**Date:** 2026-05-16
+
+---
+
 **Discovery:** Expression quality and camera engagement are two separate signals.
 **Impact:** A subject can have a pleasant expression while looking away from the camera — which ruins
 a family photo but would not be caught by expression scoring alone. Added `camera_engagement` as an
