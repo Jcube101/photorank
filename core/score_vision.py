@@ -45,6 +45,7 @@ _SCORE_SCHEMA = """{
   "photo_id": "<filename>",
   "subject_1_expression": <1-10>,
   "subject_2_expression": <1-10, or null if fewer than two people>,
+  "camera_engagement": <1-10>,
   "composition": <1-10>,
   "subject_focus": <1-10>,
   "relative_rank": <integer, 1=best overall>,
@@ -92,6 +93,19 @@ Score each photo using the following fields, 1–10:
                         A bad expression on one person significantly drags the
                         result down; do not let a strong expression on one
                         subject mask a weak or closed-eye expression on the other.
+
+  camera_engagement How directly and intentionally all subjects engage the
+                camera with their gaze.
+                STRICT RULE: if any subject is not looking at the camera,
+                the score cannot exceed 6. If all subjects are looking
+                directly at the camera, start from 8 and adjust for the
+                quality of eye contact (10 = locked in, genuine connection;
+                8 = looking at camera but distracted or glancing).
+                For single-subject shots: score based on direct eye contact
+                vs looking away.
+                  - All subjects at camera → 8–10
+                  - One subject not at camera → 1–6
+                  - No subjects at camera → 1–3
 
   composition   Framing, rule of thirds, leading lines, visual balance,
                 background cleanliness, horizon alignment.
@@ -176,8 +190,9 @@ def _parse_scores(raw: str, expected_count: int) -> list[dict]:
 
     # expression is not in the Gemini schema — it's computed here from per-subject fields.
     gemini_required  = {"photo_id", "subject_1_expression", "subject_2_expression",
-                        "composition", "subject_focus", "relative_rank", "notes"}
-    axes_from_gemini = ["composition", "subject_focus"]
+                        "camera_engagement", "composition", "subject_focus",
+                        "relative_rank", "notes"}
+    axes_from_gemini = ["camera_engagement", "composition", "subject_focus"]
 
     for item in parsed:
         missing = gemini_required - set(item.keys())
