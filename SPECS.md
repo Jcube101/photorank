@@ -32,13 +32,22 @@ places). Higher is always better.
 |---|---|---|---|
 | `sharpness` | deterministic | float | No |
 | `exposure` | deterministic | float | No |
-| `expression` | gemini | int | No |
+| `expression` | gemini (computed) | float | No |
+| `camera_engagement` | gemini | int | No |
 | `composition` | gemini | int | No |
 | `subject_focus` | gemini | int | No |
 
+`expression` is computed by Python from `subject_1_expression` and
+`subject_2_expression` returned by Gemini. See Section 4.4.
+
+`camera_engagement` is scored strictly: any subject not looking at the camera
+caps the score at 6. All subjects at camera starts at 8. It carries weight
+only in the `family` profile (0.20); other profiles include it at weight 0.00
+so it is always returned but never affects their final score.
+
 `eye_openness` has been removed from all profiles. MediaPipe is not available
-on Raspberry Pi ARM64. Original weights have been redistributed proportionally
-across the remaining five axes. See LEARNINGS.md for candidate replacements.
+on Raspberry Pi ARM64. Original weights have been redistributed proportionally.
+See LEARNINGS.md for candidate replacements.
 
 ---
 
@@ -205,27 +214,32 @@ Gemini must return a JSON array. Each element:
   "photo_id":             "IMG_4821.jpg",
   "subject_1_expression": 8,
   "subject_2_expression": 5,
+  "camera_engagement":    4,
   "composition":          6,
   "subject_focus":        9,
   "relative_rank":        1,
-  "notes":                "warm light catches subject 1's left cheek but subject 2's eyes are partially closed"
+  "notes":                "subject 2's eyes are partially closed and neither subject is looking at the camera"
 }
 ```
 
-`subject_2_expression` is `null` when fewer than two people are present (single person, no people, or landscape).
+`subject_2_expression` is `null` when fewer than two people are present.
 
-**Expression is not returned by Gemini.** `_parse_scores` computes it from the per-subject values:
+**`expression` is not returned by Gemini.** `_parse_scores` computes it from the per-subject values:
 - Single subject: `expression = subject_1_expression`
 - Two subjects: `expression = min(s1, s2) * 0.65 + max(s1, s2) * 0.35`
 
 The 65/35 weighting biases toward the weaker score — a closed-eye or flat expression on one person
 significantly drags the result rather than being masked by a strong expression on the other.
 
+**`camera_engagement` strict scoring rule (enforced in the Gemini prompt):**
+- Any subject not looking at camera → score ≤ 6
+- All subjects at camera → start from 8, adjust for eye-contact quality
+
 **Validation rules:**
-- All six keys must be present (`subject_2_expression` may be null)
+- All seven keys must be present (`subject_2_expression` may be null)
 - `subject_1_expression` must be int/float in [1, 10]
 - `subject_2_expression` must be int/float in [1, 10] or null
-- `composition`, `subject_focus` must be integers (or floats) in [1, 10]
+- `camera_engagement`, `composition`, `subject_focus` must be int/float in [1, 10]
 - `relative_rank` must be a unique integer in [1, batch_size] — 1 = best overall
 - `notes` must be a non-empty string
 - `photo_id` must match a filename in the batch
@@ -252,19 +266,20 @@ fail the batch.
 
 ### 5.1 Scoring Profiles
 
-All five axes must be present in every profile. Weights must sum to 1.0
+All six axes must be present in every profile. Weights must sum to 1.0
 (tolerance ±0.001). Raise `ValueError` on load if violated.
 
-`eye_openness` has been removed from all profiles (MediaPipe unavailable on
-ARM64). Original weights were redistributed proportionally.
+`camera_engagement` is a full axis in `ALL_AXES` but carries weight `0.00` in
+profiles that don't use it. Gemini scores it on every run; it simply contributes
+zero to the final score in those profiles.
 
-| Profile | sharpness | exposure | expression | composition | subject_focus |
-|---|---|---|---|---|---|
-| `family`  | 0.19 | 0.10 | 0.31 | 0.15 | 0.25 |
-| `portrait`| 0.27 | 0.16 | 0.27 | 0.10 | 0.20 |
-| `event`   | 0.17 | 0.16 | 0.17 | 0.28 | 0.22 |
-| `travel`  | 0.20 | 0.15 | 0.05 | 0.35 | 0.25 |
-| `custom`  | user-supplied | | | | |
+| Profile | sharpness | exposure | expression | camera_engagement | composition | subject_focus |
+|---|---|---|---|---|---|---|
+| `family`  | 0.19 | 0.06 | 0.25 | 0.20 | 0.10 | 0.20 |
+| `portrait`| 0.27 | 0.16 | 0.27 | 0.00 | 0.10 | 0.20 |
+| `event`   | 0.17 | 0.16 | 0.17 | 0.00 | 0.28 | 0.22 |
+| `travel`  | 0.20 | 0.15 | 0.05 | 0.00 | 0.35 | 0.25 |
+| `custom`  | user-supplied — all six axes required | | | | | |
 
 **travel profile:** For landscape and travel portrait shots where the background
 is intentionally part of the composition. Composition is the dominant axis (0.35).

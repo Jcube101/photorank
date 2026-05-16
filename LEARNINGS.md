@@ -101,6 +101,16 @@ re-added when a Pi ARM64-compatible implementation is found.
 
 ---
 
+**Discovery:** Expression quality and camera engagement are two separate signals.
+**Impact:** A subject can have a pleasant expression while looking away from the camera — which ruins
+a family photo but would not be caught by expression scoring alone. Added `camera_engagement` as an
+explicit Gemini axis with a strict scoring rule enforced in the prompt: any subject not looking at
+the camera caps the score at ≤6; all subjects at camera starts at 8. The axis carries weight 0.20 in
+the family profile and 0.00 in all others (scored always, only weighted in family).
+**Date:** 2026-05-16
+
+---
+
 **Discovery:** For multi-person shots, averaging expression across subjects masks individual weaknesses.
 **Impact:** A single person with closed eyes or a flat expression ruins the photo regardless of how
 good the other subject looks. Simple averaging lets a strong expression on one person mask a blink or

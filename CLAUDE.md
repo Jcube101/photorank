@@ -154,13 +154,18 @@ Five axes (eye_openness removed — MediaPipe unavailable on ARM64, original
 weights redistributed proportionally). All weights must sum to 1.0. Raise
 `ValueError` on load if violated.
 
-| Profile | sharpness | exposure | expression | composition | subject_focus |
-|---|---|---|---|---|---|
-| family  | 0.19 | 0.10 | 0.31 | 0.15 | 0.25 |
-| portrait| 0.27 | 0.16 | 0.27 | 0.10 | 0.20 |
-| event   | 0.17 | 0.16 | 0.17 | 0.28 | 0.22 |
-| travel  | 0.20 | 0.15 | 0.05 | 0.35 | 0.25 |
-| custom  | user-supplied | | | | |
+| Profile | sharpness | exposure | expression | camera_engagement | composition | subject_focus |
+|---|---|---|---|---|---|---|
+| family  | 0.19 | 0.06 | 0.25 | 0.20 | 0.10 | 0.20 |
+| portrait| 0.27 | 0.16 | 0.27 | 0.00 | 0.10 | 0.20 |
+| event   | 0.17 | 0.16 | 0.17 | 0.00 | 0.28 | 0.22 |
+| travel  | 0.20 | 0.15 | 0.05 | 0.00 | 0.35 | 0.25 |
+| custom  | user-supplied — all six axes required | | | | | |
+
+`camera_engagement` is scored by Gemini on every run. It carries weight only
+in `family` (0.20); other profiles include it at 0.00 so it appears in output
+but does not affect the score. Strict rule: any subject not looking at the
+camera caps the score at 6; all subjects at camera starts at 8.
 
 `travel` is for landscape and travel portrait shots where the background is
 intentionally part of the composition. Composition is weighted highest (0.35).

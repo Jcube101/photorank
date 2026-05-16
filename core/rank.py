@@ -38,6 +38,7 @@ def _merge(technical: dict, gemini: dict) -> dict:
         "subject_1_expression": gemini["subject_1_expression"],
         "subject_2_expression": gemini["subject_2_expression"],
         "expression":           gemini["expression"],
+        "camera_engagement":    gemini["camera_engagement"],
         "composition":          gemini["composition"],
         "subject_focus":        gemini["subject_focus"],
         "relative_rank":        gemini["relative_rank"],
