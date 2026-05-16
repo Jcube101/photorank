@@ -202,18 +202,30 @@ Gemini must return a JSON array. Each element:
 
 ```json
 {
-  "photo_id":      "IMG_4821.jpg",
-  "expression":    8,
-  "composition":   6,
-  "subject_focus": 9,
-  "relative_rank": 1,
-  "notes":         "warm light catches the subject's left cheek, creating strong depth"
+  "photo_id":             "IMG_4821.jpg",
+  "subject_1_expression": 8,
+  "subject_2_expression": 5,
+  "composition":          6,
+  "subject_focus":        9,
+  "relative_rank":        1,
+  "notes":                "warm light catches subject 1's left cheek but subject 2's eyes are partially closed"
 }
 ```
 
+`subject_2_expression` is `null` when fewer than two people are present (single person, no people, or landscape).
+
+**Expression is not returned by Gemini.** `_parse_scores` computes it from the per-subject values:
+- Single subject: `expression = subject_1_expression`
+- Two subjects: `expression = min(s1, s2) * 0.65 + max(s1, s2) * 0.35`
+
+The 65/35 weighting biases toward the weaker score — a closed-eye or flat expression on one person
+significantly drags the result rather than being masked by a strong expression on the other.
+
 **Validation rules:**
-- All five keys must be present
-- `expression`, `composition`, `subject_focus` must be integers (or floats) in [1, 10]
+- All six keys must be present (`subject_2_expression` may be null)
+- `subject_1_expression` must be int/float in [1, 10]
+- `subject_2_expression` must be int/float in [1, 10] or null
+- `composition`, `subject_focus` must be integers (or floats) in [1, 10]
 - `relative_rank` must be a unique integer in [1, batch_size] — 1 = best overall
 - `notes` must be a non-empty string
 - `photo_id` must match a filename in the batch

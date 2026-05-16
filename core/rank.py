@@ -32,14 +32,16 @@ from core.profiles import ALL_AXES, AXES_DETERMINISTIC, PROFILES, validate_weigh
 def _merge(technical: dict, gemini: dict) -> dict:
     """Combine deterministic and Gemini score dicts for one photo."""
     return {
-        "photo_id":      technical["photo_id"],
-        "sharpness":     technical["sharpness"],
-        "exposure":      technical["exposure"],
-        "expression":    gemini["expression"],
-        "composition":   gemini["composition"],
-        "subject_focus": gemini["subject_focus"],
-        "relative_rank": gemini["relative_rank"],
-        "notes":         gemini["notes"],
+        "photo_id":             technical["photo_id"],
+        "sharpness":            technical["sharpness"],
+        "exposure":             technical["exposure"],
+        "subject_1_expression": gemini["subject_1_expression"],
+        "subject_2_expression": gemini["subject_2_expression"],
+        "expression":           gemini["expression"],
+        "composition":          gemini["composition"],
+        "subject_focus":        gemini["subject_focus"],
+        "relative_rank":        gemini["relative_rank"],
+        "notes":                gemini["notes"],
     }
 
 
