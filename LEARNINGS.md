@@ -101,6 +101,17 @@ re-added when a Pi ARM64-compatible implementation is found.
 
 ---
 
+**Discovery:** For multi-person shots, averaging expression across subjects masks individual weaknesses.
+**Impact:** A single person with closed eyes or a flat expression ruins the photo regardless of how
+good the other subject looks. Simple averaging lets a strong expression on one person mask a blink or
+flat look on the other. New multi-subject expression schema: Gemini returns `subject_1_expression` and
+`subject_2_expression` independently. Python computes `expression = lower * 0.65 + upper * 0.35`,
+biasing toward the weaker score. Gemini is also prompted to specifically assess: eyes fully open vs
+partially closed; genuine smile vs neutral/forced; both subjects engaged vs one distracted.
+**Date:** 2026-05-16
+
+---
+
 **Discovery:** Gemini clusters semantic scores in the 5–7 range when given no relative anchor.
 **Impact:** Without explicit instruction to rank photos against each other, Gemini treats each
 photo in isolation and gravitates to the middle of the scale. Added relative-ranking instruction

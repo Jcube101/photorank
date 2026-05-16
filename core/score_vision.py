@@ -2,7 +2,7 @@
 Gemini semantic scorer.
 
 Scores only the three attributes that require visual understanding:
-  expression    Emotional quality, mood, facial engagement
+  expression    Weighted aggregate of per-subject expression scores (see below)
   composition   Framing, rule of thirds, visual balance, background
   subject_focus Prominence and separation of the main subject
 
@@ -10,6 +10,12 @@ Technical axes (sharpness, exposure) are computed deterministically in
 score_tech.py and never sent to Gemini. Keeping the two layers separate
 prevents Gemini from being asked to differentiate near-identical burst shots
 on technical grounds — a task it cannot reliably perform.
+
+Expression is scored per-subject for multi-person shots. Gemini returns
+subject_1_expression and subject_2_expression (null when fewer than two
+people). Python then computes expression as a weighted average biased toward
+the lower score: lower * 0.65 + upper * 0.35. A single bad expression
+significantly drags the result down rather than being masked by a good one.
 
 Gemini also returns a relative_rank (1 = best) used as a tiebreaker in rank.py
 when final_score values are equal.
@@ -37,7 +43,8 @@ AXES_SEMANTIC = ["expression", "composition", "subject_focus"]
 
 _SCORE_SCHEMA = """{
   "photo_id": "<filename>",
-  "expression": <1-10>,
+  "subject_1_expression": <1-10>,
+  "subject_2_expression": <1-10, or null if fewer than two people>,
   "composition": <1-10>,
   "subject_focus": <1-10>,
   "relative_rank": <integer, 1=best overall>,
@@ -60,13 +67,31 @@ abstract standard. Your scores MUST spread across the full 1–10 range:
   - Think of the best photo in the set as your 8–10 anchor, and score the
     rest relative to it
 
-Score each photo on three axes, 1–10:
+Score each photo using the following fields, 1–10:
 
-  expression    For photos with people: emotional quality, mood, facial
-                engagement, authenticity of expression.
-                For photos without people: overall emotional impact,
-                atmosphere, sense of life or stillness.
-                (1 = flat / lifeless, 10 = compelling / resonant)
+  subject_1_expression  Score the primary subject's expression independently.
+                        subject_2_expression scores the second subject (null
+                        if fewer than two people are present).
+
+                        For each person, look specifically for:
+                          - Eyes fully open vs partially closed or blinking
+                          - Genuine smile vs neutral or forced expression
+                          - Engaged with camera or moment vs distracted or
+                            looking away unintentionally
+
+                        For photos without people: score subject_1_expression
+                        as overall emotional impact, atmosphere, or sense of
+                        life / stillness. Set subject_2_expression to null.
+
+                        (1 = flat / lifeless / eyes closed,
+                         10 = compelling / fully engaged / genuine)
+
+                        Do NOT average the two subjects yourself. Return each
+                        score independently — the final expression value is
+                        computed separately and weighted toward the lower score.
+                        A bad expression on one person significantly drags the
+                        result down; do not let a strong expression on one
+                        subject mask a weak or closed-eye expression on the other.
 
   composition   Framing, rule of thirds, leading lines, visual balance,
                 background cleanliness, horizon alignment.
@@ -79,7 +104,7 @@ Score each photo on three axes, 1–10:
                  10 = subject dominant and unmistakable)
 
 Include a relative_rank field: rank all photos from best to worst across all
-three axes combined (1 = best overall, 2 = second best, etc.). Each photo must
+axes combined (1 = best overall, 2 = second best, etc.). Each photo must
 have a unique rank. Break ties by which photo you would choose to keep if you
 could only keep one.
 
@@ -147,16 +172,38 @@ def _parse_scores(raw: str, expected_count: int) -> list[dict]:
     if start == -1 or end == -1:
         raise ValueError(f"No JSON array found in response:\n{raw[:500]}")
 
-    parsed   = json.loads(cleaned[start : end + 1])
-    required = set(AXES_SEMANTIC) | {"photo_id", "relative_rank", "notes"}
+    parsed = json.loads(cleaned[start : end + 1])
+
+    # expression is not in the Gemini schema — it's computed here from per-subject fields.
+    gemini_required  = {"photo_id", "subject_1_expression", "subject_2_expression",
+                        "composition", "subject_focus", "relative_rank", "notes"}
+    axes_from_gemini = ["composition", "subject_focus"]
+
     for item in parsed:
-        missing = required - set(item.keys())
+        missing = gemini_required - set(item.keys())
         if missing:
             raise ValueError(f"Score object missing fields {missing}: {item}")
-        for axis in AXES_SEMANTIC:
+
+        for axis in axes_from_gemini:
             v = item[axis]
             if not isinstance(v, (int, float)) or not (1 <= v <= 10):
                 raise ValueError(f"Score out of range for {axis}: {v} in {item}")
+
+        s1 = item["subject_1_expression"]
+        if not isinstance(s1, (int, float)) or not (1 <= s1 <= 10):
+            raise ValueError(f"subject_1_expression out of range: {s1} in {item}")
+
+        s2 = item["subject_2_expression"]
+        if s2 is not None:
+            if not isinstance(s2, (int, float)) or not (1 <= s2 <= 10):
+                raise ValueError(f"subject_2_expression out of range: {s2} in {item}")
+            # Weight toward the lower score — a bad expression on one person
+            # should not be masked by a strong expression on the other.
+            lower, upper   = min(s1, s2), max(s1, s2)
+            item["expression"] = round(lower * 0.65 + upper * 0.35, 2)
+        else:
+            item["expression"] = round(float(s1), 2)
+
         rr = item["relative_rank"]
         if not isinstance(rr, int) or rr < 1 or rr > expected_count:
             raise ValueError(f"relative_rank out of range: {rr} in {item}")
@@ -208,7 +255,8 @@ def score_photos(
         profile:     Scoring profile name passed as context in the prompt.
 
     Returns:
-        List of dicts: photo_id, expression, composition, subject_focus,
+        List of dicts: photo_id, subject_1_expression, subject_2_expression,
+        expression (computed weighted average), composition, subject_focus,
         relative_rank, notes.
 
     Raises:
