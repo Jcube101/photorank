@@ -459,7 +459,7 @@ Rank a batch of photos.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `images` | file[] | Yes | 2–20 images in accepted formats |
+| `files` | file[] | Yes | 2–20 images in accepted formats |
 | `profile` | string | No | `family` (default), `portrait`, `event`, `travel`, or `custom` |
 | `mode` | string | No | `burst` or `set`. When omitted, auto-detected from EXIF timestamps |
 | `weights` | string (JSON) | If `custom` | JSON object with all six axes summing to 1.0 |

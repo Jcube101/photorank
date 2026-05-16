@@ -118,14 +118,14 @@ def _auto_detect_mode(upload_paths: list[Path]) -> str:
 
 @app.post("/rank")
 async def rank_endpoint(
-    images: list[UploadFile] = File(...),
+    files: list[UploadFile] = File(...),
     profile: str = Form("family"),
     mode: Optional[str] = Form(None),
     weights: Optional[str] = Form(None),
 ) -> JSONResponse:
     # --- Input validation ---
-    if not 2 <= len(images) <= 20:
-        raise HTTPException(422, detail=f"Expected 2–20 images, got {len(images)}.")
+    if not 2 <= len(files) <= 20:
+        raise HTTPException(422, detail=f"Expected 2–20 images, got {len(files)}.")
 
     if profile not in _VALID_PROFILES:
         raise HTTPException(
@@ -158,7 +158,7 @@ async def rank_endpoint(
     seen_names: dict[str, int] = {}
 
     try:
-        for upload in images:
+        for upload in files:
             orig     = upload.filename or "image.jpg"
             stem     = Path(orig).stem
             suffix   = Path(orig).suffix.lower() or ".jpg"
@@ -235,6 +235,8 @@ def _run_burst(photos: list[dict]) -> dict:
         raise HTTPException(422, detail="All images are below the blur threshold.")
 
     ranked = _rank_burst(sharp)
+    for item in ranked:
+        item.pop("path", None)
     return {
         "mode":           "burst",
         "burst_weights":  BURST_WEIGHTS,
