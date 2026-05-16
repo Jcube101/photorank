@@ -101,6 +101,12 @@ re-added when a Pi ARM64-compatible implementation is found.
 
 ---
 
+**Discovery:** Face-region Laplacian variance (face_blur_raw) shows 3x difference between best and worst photo in a true burst set where full-image sharpness showed less than 6% variance.
+**Impact:** Burst mode validated. Face crop is the correct unit of measurement for burst differentiation, not full image. face_sharpness at 0.5 weight is the primary signal for burst ranking. This approach is fast, free, and more accurate than Gemini for this use case.
+**Date:** 2026-05-16
+
+---
+
 **Discovery:** Gemini consistently fails to differentiate true burst shots (same moment, <10 seconds apart, near-identical framing).
 **Impact:** Scores cluster identically across all photos in a burst regardless of prompt engineering.
 Vision LLMs are not suitable as the primary differentiator for true bursts — the visual difference
