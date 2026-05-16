@@ -3,5 +3,11 @@ opencv-python-headless==4.10.0.84
 google-generativeai==0.8.3
 python-dotenv==1.0.1
 
+# Phase 2 dependencies — FastAPI server
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+Pillow==11.2.1
+
 # eye_openness is stubbed (returns 5.0) until a Pi ARM64-compatible
 # alternative to MediaPipe is identified. See core/score_tech.py.
