@@ -37,7 +37,8 @@ it did. Never show only a final number.
 - **Phase 2 (FastAPI + Pi deployment): In progress — next focus.**
 - Two-mode pipeline: `--mode burst` (deterministic only) and `--mode set` (default, Gemini)
 - Phase 1 gate passed: both modes validated, top pick agreement >80% on real test sets
-- `api/main.py` and `frontend/App.jsx` are now unblocked for Phase 2 work
+- `api/main.py` implemented: `POST /rank`, `GET /health`, runs on port **8007**
+- `frontend/App.jsx` is unblocked for Phase 3 work once Phase 2 is confirmed on device
 
 ---
 
@@ -46,7 +47,7 @@ it did. Never show only a final number.
 | Layer | Technology | Why this choice |
 |---|---|---|
 | Frontend | React PWA | No App Store friction. Mobile-first. |
-| Backend | FastAPI on Raspberry Pi | Cheap, private, already owned hardware |
+| Backend | FastAPI on Raspberry Pi, port 8007 | Cheap, private, already owned hardware |
 | Tunnel | Cloudflare Tunnel | Exposes Pi to internet without opening firewall ports |
 | Auth | Cloudflare Access | JWT-based, free for personal use, zero backend code needed |
 | Technical scoring | OpenCV (Haar cascade) | Local, free, deterministic, fast on Pi — MediaPipe removed (no ARM64 wheels) |
@@ -285,6 +286,10 @@ These cannot be relaxed for any reason:
 - `core/profiles.py:PROFILES` — single source of truth for all profile weight dicts
 - `core/profiles.py:BURST_WEIGHTS` — burst mode axis weights (face_sharpness, sharpness, face_exposure, exposure)
 - `core/profiles.py:validate_weights()` — called on load, raises if weights don't sum to 1.0
+- `api/main.py:rank_endpoint()` — FastAPI POST /rank handler; saves uploads, auto-detects mode, calls ingest → score → rank, cleans up
+- `api/main.py:_auto_detect_mode()` — reads EXIF DateTimeOriginal from raw uploads; returns 'burst' if ≤6 files within 10s, else 'set'
+- `api/main.py:_run_burst()` — burst scoring sub-routine (called after EXIF stripping by ingest)
+- `api/main.py:_run_set()` — set mode scoring sub-routine (deterministic → Gemini → merge → rank)
 
 ---
 

@@ -64,6 +64,7 @@ per-axis score breakdown so you can verify the ranking, not just accept it.
 - Python 3.11+
 - A Gemini API key (free tier covers typical use — set mode only)
 - `opencv-python-headless`, `google-generativeai`, `python-dotenv`
+- Phase 2 (API server): `fastapi`, `uvicorn[standard]`, `python-multipart`, `Pillow`
 
 ```bash
 pip install -r requirements.txt
@@ -80,6 +81,8 @@ cp .env.example .env
 ```
 
 ## Running
+
+### CLI
 
 Drop photos into `input/`, then:
 
@@ -113,6 +116,32 @@ python core/score_tech.py input/ --threshold 100
 The results JSON contains every photo's rank, final score, per-axis breakdown,
 and — in set mode — Gemini's one-sentence note.
 
+### API server (Phase 2)
+
+```bash
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8007 --reload
+```
+
+Health check:
+
+```bash
+curl http://localhost:8007/health
+```
+
+Rank photos:
+
+```bash
+curl -X POST http://localhost:8007/rank \
+  -F "images=@photo1.jpg" \
+  -F "images=@photo2.jpg" \
+  -F "images=@photo3.jpg" \
+  -F "profile=family"
+```
+
+The `mode` parameter is optional. When omitted, the API auto-detects burst mode
+if ≤6 photos all have EXIF timestamps within 10 seconds of each other; otherwise
+it uses set mode. Pass `mode=burst` or `mode=set` to override.
+
 ## Privacy
 
 Photos are never stored. The only external service used is Gemini 2.0 Flash
@@ -123,12 +152,13 @@ no telemetry.
 ## Status
 
 **Phase 1 (CLI pipeline) is complete and validated on real photos.**
-Phase 2 (FastAPI on Raspberry Pi) is in progress.
+**Phase 2 (FastAPI API) is implemented.** `POST /rank` and `GET /health` are
+working. On-device deployment (Cloudflare Tunnel, systemd service) is pending.
 
 ## What's Coming
 
-- **Phase 2** — FastAPI on a Raspberry Pi, accessible from your phone via
-  Cloudflare Tunnel
+- **Phase 2 deployment** — Raspberry Pi setup: Cloudflare Tunnel, systemd
+  service, on-device end-to-end validation
 - **Phase 3** — Mobile-first PWA: tap to upload, swipe through results
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.
@@ -146,7 +176,8 @@ photorank/
 │   └── profiles.py     all scoring profiles and weights
 ├── input/              drop photos here before running
 ├── output/             ranked results written here
-├── api/                Phase 2: FastAPI wrapper (stub)
+├── api/
+│   └── main.py         Phase 2: FastAPI wrapper (POST /rank, GET /health)
 └── frontend/           Phase 3: React PWA (stub)
 ```
 

@@ -57,15 +57,16 @@ Gemini is only called on photos that pass the blur gate.
 **Goal:** The Phase 1 pipeline accessible from a phone via a URL.
 
 **In scope:**
-- FastAPI app wrapping Phase 1 logic (`api/main.py`)
-- `POST /rank` endpoint — multipart upload, returns scored JSON
-- `GET /health` endpoint
-- Immediate file deletion (try/finally, before response is dispatched)
-- EXIF stripping before images are sent to Gemini
-- Cloudflare Tunnel setup (exposes the Pi endpoint publicly)
-- Cloudflare Access gate (simple email-based auth)
-- Systemd service to keep the API running on the Pi
-- `.env` on Pi for `GEMINI_API_KEY`
+- [x] FastAPI app wrapping Phase 1 logic (`api/main.py`) — implemented
+- [x] `POST /rank` endpoint — multipart upload, returns scored JSON — implemented
+- [x] `GET /health` endpoint — implemented
+- [x] Immediate file deletion (try/finally, before response is dispatched) — implemented
+- [x] EXIF stripping before images are sent to Gemini — implemented (cv2 strips via ingest)
+- [x] Auto burst-mode detection from EXIF timestamps — implemented
+- [ ] Cloudflare Tunnel setup (exposes the Pi endpoint publicly)
+- [ ] Cloudflare Access gate (simple email-based auth)
+- [ ] Systemd service to keep the API running on the Pi
+- [ ] `.env` on Pi for `GEMINI_API_KEY`
 
 **Out of scope:**
 - Any frontend

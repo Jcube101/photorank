@@ -2,15 +2,34 @@
 
 ## Current Status
 
-**Phase 1 (CLI pipeline) is complete.** Phase 2 (FastAPI + Raspberry Pi) is
-in progress and open for contributions. Phase 3 (PWA frontend) contributions
-are welcome from Phase 3 onward — open an issue to discuss before starting work.
+**Phase 1 (CLI pipeline) is complete.** **Phase 2 API (`api/main.py`) is
+implemented** — `POST /rank` and `GET /health` are working. On-device deployment
+(Cloudflare Tunnel, systemd) is in progress and open for contributions. Phase 3
+(PWA frontend) contributions are welcome from Phase 3 onward — open an issue to
+discuss before starting work.
 
 ---
 
 ## Running Locally
 
-See [README.md](README.md) for setup and run instructions.
+See [README.md](README.md) for full setup instructions.
+
+**CLI:**
+```bash
+python core/rank.py --profile family
+```
+
+**API server:**
+```bash
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8007 --reload
+```
+
+Test with:
+```bash
+curl http://localhost:8007/health
+curl -X POST http://localhost:8007/rank \
+  -F "images=@photo1.jpg" -F "images=@photo2.jpg" -F "profile=family"
+```
 
 ---
 

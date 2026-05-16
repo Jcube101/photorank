@@ -22,7 +22,11 @@ are fixed: `face_sharpness 0.50 / sharpness 0.20 / face_exposure 0.20 / exposure
 **Set mode** uses the full two-layer pipeline: deterministic pre-filter
 (blur gate) then Gemini semantic scoring with profile weights.
 
-The mode is selected by the user. No auto-detection is performed.
+In the CLI, the mode is selected explicitly via `--mode`. In the API (`POST /rank`),
+the `mode` field is optional: when omitted, the API auto-detects burst mode if ≤6
+photos are uploaded and all EXIF `DateTimeOriginal` timestamps fall within 10 seconds
+of each other. If any timestamp is absent or unreadable, auto-detection falls back to
+set mode.
 
 ---
 
@@ -443,8 +447,9 @@ Rounded to 3 decimal places. When two photos have equal `final_score`,
 
 ## 6. FastAPI API Contract (Phase 2)
 
-**Base URL:** `https://<tunnel>.trycloudflare.com` (Cloudflare Tunnel)
-**Auth:** Cloudflare Access (JWT on every request, handled by the tunnel)
+**Local port:** `8007`
+**Production base URL:** `https://<tunnel>.trycloudflare.com` (Cloudflare Tunnel)
+**Auth:** Cloudflare Access (JWT on every request, handled by the tunnel — Phase 5)
 
 ### 6.1 POST /rank
 
@@ -454,35 +459,39 @@ Rank a batch of photos.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `files` | file[] | Yes | 1–50 images in accepted formats |
-| `profile` | string | Yes | `family`, `portrait`, `event`, `travel`, or `custom` |
-| `weights` | string (JSON) | If `custom` | JSON object with all five axes summing to 1.0 |
-| `blur_threshold` | float | No | Default 100.0 |
+| `images` | file[] | Yes | 2–20 images in accepted formats |
+| `profile` | string | No | `family` (default), `portrait`, `event`, `travel`, or `custom` |
+| `mode` | string | No | `burst` or `set`. When omitted, auto-detected from EXIF timestamps |
+| `weights` | string (JSON) | If `custom` | JSON object with all six axes summing to 1.0 |
+
+**Auto-detection rule (when `mode` is omitted):** If ≤6 photos are uploaded and
+all `DateTimeOriginal` EXIF timestamps are within 10 seconds of each other, burst
+mode is used. Otherwise set mode. Falls back to set mode if any timestamp is absent.
 
 **Response 200** — application/json:
 
-The full ranker output (see Section 5.5). All uploaded files are deleted
-before the response is sent, regardless of success or failure.
+The full ranker output (see Section 5.4). All uploaded files are deleted
+before the response is returned, regardless of success or failure.
 
 **Error responses:**
 
 | Status | Condition |
 |---|---|
-| 400 | Invalid profile name |
-| 422 | Weights JSON malformed, missing axes (five required), or doesn't sum to 1.0 |
-| 413 | Any single file exceeds 10 MB |
-| 415 | Unsupported image format |
-| 500 | Gemini API failure (after retries) — includes raw error message |
-| 503 | Gemini API rate limit exceeded |
+| 422 | Fewer than 2 or more than 20 images; invalid profile or mode; malformed or invalid weights |
+| 500 | Gemini API key not set; Gemini returned no scoreable results |
+| 502 | Gemini API failure after retries |
 
-**Cleanup guarantee:** A FastAPI background task deletes all uploaded files
-after the response is dispatched. If the handler raises before cleanup, a
-try/finally block in the route handler ensures deletion still runs.
+All errors return structured JSON: `{"detail": "<message>"}`. Raw stack traces
+are never exposed to the client.
+
+**Cleanup guarantee:** Two nested `try/finally` blocks guarantee both the upload
+directory and the ingest temp directory are deleted even when scoring fails
+mid-flight.
 
 ### 6.2 GET /health
 
 ```json
-{"status": "ok", "gemini_key_set": true}
+{"status": "ok", "version": "1.0", "gemini_key_set": true}
 ```
 
 Returns 200 if the service is up. `gemini_key_set` reflects whether
