@@ -10,12 +10,26 @@ condition is met and confirmed on real photos.
 **Goal:** A working, quality-verified scoring pipeline that can be run from the
 terminal on a folder of real phone photos.
 
+**Two modes (both ship in Phase 1):**
+
+**`--mode burst`** — for 2–6 near-identical photos from the same moment.
+Gemini is skipped entirely — no API cost, no network latency.
+Signals: full-image sharpness and exposure + face-region sharpness and exposure
+(OpenCV Haar cascade crop). Face-region signals catch per-face focus differences
+that full-image sharpness misses. Fast enough for immediate feedback.
+
+**`--mode set`** (default) — for larger or more varied photo sets.
+Full two-layer pipeline: deterministic pre-filter (blur gate) then Gemini
+semantic scoring (expression, composition, subject_focus, camera_engagement).
+Gemini is only called on photos that pass the blur gate.
+
 **In scope:**
-- `blur_filter.py` — deterministic technical scorer (sharpness, exposure, eye openness)
-- `scorer.py` — Gemini 1.5 Flash semantic scorer (expression, composition, subject focus)
-- `ranker.py` — two-layer merge, profile weights, CLI output
-- Three built-in profiles: family, portrait, event
-- Custom profile via `--weights` JSON flag
+- `core/score_tech.py` — deterministic scorer (sharpness, exposure)
+- `core/score_burst.py` — face-region scorer for burst mode
+- `core/score_vision.py` — Gemini semantic scorer (set mode only)
+- `core/rank.py` — mode-aware pipeline, profile weights, CLI output
+- Four built-in profiles: family, portrait, event, travel
+- Custom profile via `--weights` JSON flag (set mode)
 - Adjustable blur gate threshold
 - Full score breakdown in output (per-axis scores, weights, sources, notes)
 
@@ -25,10 +39,12 @@ terminal on a folder of real phone photos.
 - Moment grouping
 
 **Definition of done:**
-- [ ] Run against at least three real burst sets (5–20 photos each) on different subjects
-- [ ] Tool's top pick agrees with human's top pick in >80% of test sets
-- [ ] Score breakdown explains the ranking in a way that makes sense to a non-technical reviewer
-- [ ] Eye openness correctly identifies blinks and penalises them
+- [ ] Burst mode: run against at least three real burst sets (2–6 photos). Top pick
+      agrees with human's top pick in >80% of test sets
+- [ ] Set mode: run against at least three varied sets (7–20 photos). Top pick
+      agrees with human's top pick in >80% of test sets
+- [ ] Score breakdown explains the ranking in a way that makes sense to a
+      non-technical reviewer
 - [ ] Exposure scoring correctly penalises blown highlights and underexposed shots
 - [ ] LEARNINGS.md updated with anything surprising from real-photo testing
 

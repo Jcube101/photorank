@@ -34,7 +34,8 @@ it did. Never show only a final number.
 ## Current State
 
 - **Phase 1 (CLI pipeline): In progress. Not yet tested on real photos.**
-- All Phase 1 code is written: `blur_filter.py`, `scorer.py`, `ranker.py`
+- Two-mode pipeline: `--mode burst` (deterministic only) and `--mode set` (default, Gemini)
+- All Phase 1 code is written: `score_tech.py`, `score_burst.py`, `score_vision.py`, `rank.py`
 - Phase 1 gate: must be tested on real photos and scoring quality confirmed
   (top pick must agree with human's top pick >80% of test sets) before any
   Phase 2 code is written
@@ -58,38 +59,49 @@ it did. Never show only a final number.
 
 ---
 
-## Scoring Architecture — Why Two Layers
+## Scoring Architecture — Two Modes
 
-**The core problem:** Gemini alone cannot reliably differentiate near-identical
-burst shots on technical grounds. If you send it five shots of the same moment
-taken half a second apart, it cannot tell which is sharpest or which has the
-best eye contact. It sees them as approximately equal.
+**The core problem:** Gemini cannot reliably differentiate near-identical burst
+shots. Scores cluster identically regardless of prompt engineering. Vision LLMs
+are not suitable as the primary differentiator for true bursts.
 
-**The solution:** Split scoring by what each layer can actually do:
+**The solution:** Two modes, each doing what it can actually do.
 
-**Layer 1 — deterministic (blur_filter.py):** Objective, local, free.
-- `sharpness`: Combined Laplacian variance + Tenengrad gradient energy.
-  Both are needed — Laplacian alone is fooled by high-contrast OOF shots.
-  Log-normalized to 1–10.
-- `exposure`: Histogram analysis — mean brightness, contrast (std dev),
-  highlight/shadow clipping fractions. Normalized to 1–10.
-- `eye_openness`: MediaPipe Face Mesh EAR (eye aspect ratio). Worst of two
-  eyes scored — catches single blinks. Returns `None` if no face; ranker
-  redistributes that weight proportionally across the other five axes.
-- `blur_raw`: Raw Laplacian variance (unscaled). Used as the blur gate to
-  exclude images before Gemini is called. Default threshold: 100.
+### Burst Mode (`--mode burst`)
 
-**Layer 2 — semantic (scorer.py, Gemini 1.5 Flash):** Only what Gemini can
-reliably judge:
-- `expression`: Emotional quality, mood, facial engagement
-- `composition`: Framing, rule of thirds, visual balance, background
-- `subject_focus`: Prominence and separation of the main subject
-- `notes`: One specific, actionable sentence — the most important thing
-  about this photo
+For 2–6 near-identical photos from the same moment. Gemini is skipped entirely.
 
-**Gemini must never be asked about sharpness or exposure.** The prompt
-explicitly tells it not to assess those — they are measured deterministically
-and Gemini will produce meaningless noise on near-identical shots.
+**Deterministic signals only:**
+- `sharpness`: Full-image Laplacian + Tenengrad, log-normalized 1–10.
+- `exposure`: Full-image histogram analysis 1–10.
+- `face_sharpness`: Laplacian variance on the face bounding box crop (OpenCV
+  Haar cascade). Catches per-face focus differences that full-image sharpness
+  misses — one burst frame can have a sharp face and another a slightly soft one
+  while full-image sharpness is identical.
+- `face_exposure`: Exposure score on the face crop. Face lighting can differ
+  within a burst when the subject turns slightly.
+- `blur_raw` / `face_blur_raw`: Raw Laplacian values for diagnostics.
+
+**BURST_WEIGHTS**: face_sharpness 0.50, sharpness 0.20, face_exposure 0.20, exposure 0.10
+
+### Set Mode (`--mode set`, default)
+
+For 7+ photos, or any varied photo set where semantic differences exist.
+
+**Layer 1 — deterministic (score_tech.py):** sharpness, exposure, blur_raw.
+Blur gate excludes images below threshold before Gemini is called.
+
+**Layer 2 — semantic (score_vision.py, Gemini 2.0 Flash):** Only what Gemini
+can reliably judge across varied photos:
+- `expression`: Per-subject emotional quality, weighted toward weaker subject.
+- `camera_engagement`: Direct eye contact strictness (≤6 if anyone looks away).
+- `composition`: Framing, rule of thirds, visual balance, background.
+- `subject_focus`: Prominence and separation of the main subject.
+- `notes`: One specific, actionable sentence — the most important thing.
+- `relative_rank`: Gemini's holistic ordering, used as a tiebreaker.
+
+**Gemini must never be asked about sharpness or exposure** — it produces
+meaningless noise on near-identical shots for technical axes.
 
 ---
 
@@ -109,9 +121,10 @@ photorank/
 ├── requirements.txt        ← Phase 1 deps
 ├── core/                   ← scoring engine (everything wraps this)
 │   ├── ingest.py           ← collect images, validate formats, compress to ~1.5 MP
-│   ├── score_tech.py       ← Layer 1: deterministic technical scorer
-│   ├── score_vision.py     ← Layer 2: Gemini semantic scorer
-│   ├── rank.py             ← merge layer, profile weights, CLI entry point
+│   ├── score_tech.py       ← deterministic scorer (sharpness, exposure)
+│   ├── score_burst.py      ← burst mode: face-region sharpness + exposure
+│   ├── score_vision.py     ← Gemini semantic scorer (set mode only)
+│   ├── rank.py             ← mode-aware pipeline, profile weights, CLI entry point
 │   └── profiles.py         ← single source of truth for all profiles and weights
 ├── input/                  ← drop test photos here; contents git-ignored
 ├── output/                 ← ranked results written here; contents git-ignored
@@ -126,7 +139,13 @@ photorank/
 ## Phase 1 CLI — How to Run
 
 ```bash
-# Full pipeline (reads from input/ by default)
+# Burst mode — deterministic only, no Gemini (2–6 near-identical shots)
+python core/rank.py --mode burst
+
+# Burst mode with explicit input path
+python core/rank.py --mode burst --input /path/to/burst_set
+
+# Set mode — full pipeline with Gemini (default)
 python core/rank.py --profile family
 
 # Explicit input path
@@ -255,10 +274,13 @@ These cannot be relaxed for any reason:
 - `core/ingest.py:cleanup()` — always call this after scoring; deletes temp files
 - `core/score_tech.py:compute_technical_scores()` — single-image deterministic scoring; accepts `photo_id` override
 - `core/score_tech.py:compute_technical_scores_batch()` — batch version
-- `core/score_vision.py:score_photos()` — Gemini semantic scoring; accepts `photo_ids` list; abstraction point for swapping models
-- `core/rank.py:rank_photos()` — merge + weight + rank
-- `core/rank.py:_effective_weights()` — eye_openness null redistribution logic
+- `core/score_burst.py:compute_burst_scores()` — face-region burst scoring; accepts `photo_id` override
+- `core/score_burst.py:compute_burst_scores_batch()` — batch version
+- `core/score_vision.py:score_photos()` — Gemini semantic scoring; accepts `photo_ids` list; set mode only
+- `core/rank.py:rank_photos()` — merge + weight + rank (set mode)
+- `core/rank.py:_rank_burst()` — apply BURST_WEIGHTS, sort by final_score (burst mode)
 - `core/profiles.py:PROFILES` — single source of truth for all profile weight dicts
+- `core/profiles.py:BURST_WEIGHTS` — burst mode axis weights (face_sharpness, sharpness, face_exposure, exposure)
 - `core/profiles.py:validate_weights()` — called on load, raises if weights don't sum to 1.0
 
 ---

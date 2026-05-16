@@ -42,6 +42,16 @@ PROFILES: dict[str, dict[str, float]] = {
     },
 }
 
+# Burst mode uses a separate axis set — face-region signals are only available
+# when running score_burst.py, not in the standard set-mode pipeline.
+# These weights are not validated by validate_weights (different axis set).
+BURST_WEIGHTS: dict[str, float] = {
+    "face_sharpness": 0.50,
+    "sharpness":      0.20,
+    "face_exposure":  0.20,
+    "exposure":       0.10,
+}
+
 
 def validate_weights(weights: dict[str, float]) -> None:
     """Raise ValueError if weights are missing axes or don't sum to 1.0 (±0.001)."""
