@@ -48,7 +48,7 @@ it did. Never show only a final number.
 |---|---|---|
 | Frontend | React PWA | No App Store friction. Mobile-first. |
 | Backend | FastAPI on Raspberry Pi, port 8007 | Cheap, private, already owned hardware |
-| Tunnel | Cloudflare Tunnel | Exposes Pi to internet without opening firewall ports |
+| Tunnel | Cloudflare Tunnel → `photorank.job-joseph.com` | Exposes Pi to internet without opening firewall ports |
 | Auth | Cloudflare Access | JWT-based, free for personal use, zero backend code needed |
 | Technical scoring | OpenCV (Haar cascade) | Local, free, deterministic, fast on Pi — MediaPipe removed (no ARM64 wheels) |
 | Semantic scoring | Gemini 2.0 Flash | Near-free, reliable JSON output, strong at semantic tasks |
