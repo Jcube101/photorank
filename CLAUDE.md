@@ -34,11 +34,13 @@ it did. Never show only a final number.
 ## Current State
 
 - **Phase 1 (CLI pipeline): Complete. Validated on real photos.**
-- **Phase 2 (FastAPI + Pi deployment): In progress — next focus.**
+- **Phase 2 (FastAPI + Pi deployment): Complete. Validated on real device.**
+- **Phase 3 (React PWA): In progress — next focus.**
 - Two-mode pipeline: `--mode burst` (deterministic only) and `--mode set` (default, Gemini)
 - Phase 1 gate passed: both modes validated, top pick agreement >80% on real test sets
-- `api/main.py` implemented: `POST /rank`, `GET /health`, runs on port **8007**
-- `frontend/App.jsx` is unblocked for Phase 3 work once Phase 2 is confirmed on device
+- Phase 2 gate passed: end-to-end validated on iPhone via `photorank.job-joseph.com`
+- `api/main.py`: `POST /rank`, `GET /health`, port **8007**, live at `photorank.job-joseph.com`
+- `frontend/App.jsx` is now unblocked — Phase 3 is the current focus
 
 ---
 

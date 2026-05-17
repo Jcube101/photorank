@@ -52,21 +52,21 @@ Gemini is only called on photos that pass the blur gate.
 
 ---
 
-## Phase 2 — FastAPI + Raspberry Pi Deployment (current)
+## Phase 2 — FastAPI + Raspberry Pi Deployment ✓ COMPLETE
 
 **Goal:** The Phase 1 pipeline accessible from a phone via a URL.
 
 **In scope:**
-- [x] FastAPI app wrapping Phase 1 logic (`api/main.py`) — implemented
-- [x] `POST /rank` endpoint — multipart upload, returns scored JSON — implemented
-- [x] `GET /health` endpoint — implemented
-- [x] Immediate file deletion (try/finally, before response is dispatched) — implemented
-- [x] EXIF stripping before images are sent to Gemini — implemented (cv2 strips via ingest)
-- [x] Auto burst-mode detection from EXIF timestamps — implemented
-- [ ] Cloudflare Tunnel setup (exposes the Pi endpoint publicly)
-- [ ] Cloudflare Access gate (simple email-based auth)
-- [ ] Systemd service to keep the API running on the Pi
-- [ ] `.env` on Pi for `GEMINI_API_KEY`
+- [x] FastAPI app wrapping Phase 1 logic (`api/main.py`)
+- [x] `POST /rank` endpoint — multipart upload, returns scored JSON
+- [x] `GET /health` endpoint
+- [x] Immediate file deletion (try/finally, before response is dispatched)
+- [x] EXIF stripping before images are sent to Gemini (cv2 strips via ingest)
+- [x] Auto burst-mode detection from EXIF timestamps
+- [x] Cloudflare Tunnel setup → `photorank.job-joseph.com`
+- [x] Cloudflare Access gate (email-based auth)
+- [x] Systemd service (auto-restarts on reboot)
+- [x] `.env` on Pi for `GEMINI_API_KEY`
 
 **Out of scope:**
 - Any frontend
@@ -74,13 +74,13 @@ Gemini is only called on photos that pass the blur gate.
 - Batch/bulk ranking
 
 **Definition of done:**
-- [ ] Upload photos from an iPhone, get ranked JSON back, in <60 seconds for 20 photos
-- [ ] Verified that files are deleted before response — confirmed with filesystem check
-- [ ] API accessible over Cloudflare tunnel; returns 401 for unauthenticated requests
-- [ ] Survives a Pi reboot (systemd service auto-restarts)
-- [ ] `GET /health` returns 200 and correct `gemini_key_set` value
+- [x] Upload photos from an iPhone, get ranked JSON back, in <60 seconds for 20 photos
+- [x] Verified that files are deleted before response — confirmed with filesystem check
+- [x] API accessible over Cloudflare tunnel; returns 401 for unauthenticated requests
+- [x] Survives a Pi reboot (systemd service auto-restarts)
+- [x] `GET /health` returns 200 and correct `gemini_key_set` value
 
-**Phase 2 gate:** All definition-of-done items confirmed on real device before Phase 3.
+**Phase 2 gate:** ✓ Passed — all items confirmed on real device. Phase 3 may begin.
 
 ---
 

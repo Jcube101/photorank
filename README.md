@@ -152,13 +152,11 @@ no telemetry.
 ## Status
 
 **Phase 1 (CLI pipeline) is complete and validated on real photos.**
-**Phase 2 (FastAPI API) is implemented.** `POST /rank` and `GET /health` are
-working. On-device deployment (Cloudflare Tunnel, systemd service) is pending.
+**Phase 2 (FastAPI + Pi deployment) is complete.** API is live at
+`https://photorank.job-joseph.com`. Validated end-to-end on a real iPhone.
 
 ## What's Coming
 
-- **Phase 2 deployment** — Raspberry Pi setup: Cloudflare Tunnel, systemd
-  service, on-device end-to-end validation
 - **Phase 3** — Mobile-first PWA: tap to upload, swipe through results
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.

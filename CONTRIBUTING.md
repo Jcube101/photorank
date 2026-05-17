@@ -2,10 +2,9 @@
 
 ## Current Status
 
-**Phase 1 (CLI pipeline) is complete.** **Phase 2 API (`api/main.py`) is
-implemented** — `POST /rank` and `GET /health` are working. On-device deployment
-(Cloudflare Tunnel, systemd) is in progress and open for contributions. Phase 3
-(PWA frontend) contributions are welcome from Phase 3 onward — open an issue to
+**Phase 1 (CLI pipeline) is complete.** **Phase 2 (FastAPI + Pi deployment) is
+complete** — API is live at `https://photorank.job-joseph.com`. **Phase 3 (PWA
+frontend) is the current focus** and open for contributions — open an issue to
 discuss before starting work.
 
 ---
