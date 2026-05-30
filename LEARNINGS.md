@@ -151,4 +151,28 @@ are equal.
 
 ---
 
+**Discovery:** The Claude Design prototype encoded a simplified 5-axis mock model (sharpness, expression, composition, exposure, focus) that does not match the real API's 6-axis `score_breakdown` (and burst mode's 4 face/full-image axes).
+**Impact:** The production PWA renders the breakdown **dynamically from whatever axes the API returns**, never hardcoding a weight table. One code path (`frontend/src/lib/breakdown.js`) handles both modes: zero-weight axes (e.g. `camera_engagement` outside `family`) render muted, and burst-mode face axes render unchanged. Design files were extracted for tokens/layout only, then archived to `frontend/_design/`.
+**Date:** 2026-05-31
+
+---
+
+**Discovery:** Browsers other than iOS Safari cannot decode HEIC, so a HEIC `<img>`/`createImageBitmap` preview silently fails — and HEIC is the iPhone default.
+**Impact:** Client-side compression does double duty: downscaling to ~1.5 MP for upload **and** re-encoding to JPEG via `<canvas>`, which yields a browser-renderable preview. The original filename is preserved so the server's `photo_id` maps back to the right preview. On decode failure the original file is uploaded untouched and the UI falls back to the design's gradient placeholder — scoring still works, only the thumbnail is generic.
+**Date:** 2026-05-31
+
+---
+
+**Discovery:** `POST /rank` is a single blocking call, so the frontend cannot show real per-stage pipeline progress.
+**Impact:** The loading screen animates the four backend stages cosmetically — the bar eases toward ~92% while the request is in flight and completes when the response lands. The Gemini "Scoring axes" step is hidden when ≤6 files are selected as a burst guess, but `mode` is omitted from the request so the **server** still makes the authoritative burst/set decision from EXIF. The displayed stages are honest about the pipeline shape without implying live telemetry.
+**Date:** 2026-05-31
+
+---
+
+**Discovery:** "Bar width = raw score" misrepresents how a photo actually ranks; what matters is each axis's *contribution* to the weighted total.
+**Impact:** Breakdown bars are drawn as **contribution** (weight × raw), normalised so the heaviest axis at a perfect 10 fills the track, with a dashed cap marking that axis's own maximum. Each row shows the explicit math (`raw × weight = contribution`). This makes a high-raw-but-low-weight axis visibly small, matching its real influence on the rank — reinforcing the "verify, don't trust" principle.
+**Date:** 2026-05-31
+
+---
+
 *Add new entries above this line as discoveries are made.*

@@ -84,21 +84,28 @@ Gemini is only called on photos that pass the blur gate.
 
 ---
 
-## Phase 3 — Mobile-First PWA
+## Phase 3 — Mobile-First PWA ✓ BUILT (gate pending device validation)
 
 **Goal:** A usable, fast UI that runs in a phone browser. No App Store required.
 
 **In scope:**
-- React PWA — `frontend/App.jsx`
-- Mobile-first layout (designed for a 390px viewport, works up to desktop)
-- Photo upload: file picker + drag-and-drop
-- Profile selector
-- Results view: ranked list with score, rank, breakdown toggle, and notes
-- Client-side image compression before upload (max 1600px longest dimension,
-  JPEG quality 80) — this is Phase 4 in the build sequence but naturally
-  belongs in the frontend
-- Progressive Web App manifest (add to home screen)
-- Cloudflare Access login redirect handled transparently
+- [x] React + Vite PWA in `frontend/` (state machine in `src/App.jsx`; screens
+      and components under `src/screens/` and `src/components/`)
+- [x] Mobile-first layout (390px base, centred up to 480px on larger screens)
+- [x] Photo upload: file picker + drag-and-drop, 2–20 validation with inline error
+- [x] Profile selector (family / portrait / travel / event)
+- [x] Three screens: upload, loading (animated pipeline stages), results
+- [x] Hero №1 result + runners-up with expandable per-axis score breakdown
+      (bar width = contribution, explicit math, dashed axis-max cap) rendered
+      dynamically from the API `score_breakdown` (both burst and set modes)
+- [x] Client-side image compression before upload (~1.5 MP, JPEG q0.85;
+      HEIC→JPEG so previews render) — moved into the frontend
+- [x] PWA manifest (add to home screen) + service worker (offline app shell;
+      never caches `/rank`)
+- [x] Graceful error/offline states — friendly copy, never raw server detail
+
+Auth note: Cloudflare Access redirect is handled by the tunnel transparently;
+the frontend makes no auth-specific code changes.
 
 **Out of scope:**
 - User accounts, saved history, or persistent rankings
@@ -106,12 +113,16 @@ Gemini is only called on photos that pass the blur gate.
 - Native app (App Store / Play Store)
 
 **Definition of done:**
-- [ ] Golden path works on iPhone Safari: pick folder, select profile, get ranked results
+- [ ] Golden path works on iPhone Safari: pick photos, select profile, get ranked results
 - [ ] Score breakdown is readable and makes sense to a non-technical user
 - [ ] Notes are displayed prominently — not buried
 - [ ] Upload + score + display completes in <90 seconds for 20 photos on a phone
 - [ ] Passes Lighthouse PWA audit (installable)
-- [ ] Works offline with a sensible error state (not just a blank screen)
+- [x] Works offline with a sensible error state (not just a blank screen)
+
+Build verified locally (`npm run build`), breakdown bar math validated against
+SPECS §5.3, and the served bundle/manifest/SW/icons confirmed. The remaining
+checkboxes require testing on a real device.
 
 **Phase 3 gate:** End-to-end test on a real phone. At least one non-technical
 person completes the full flow without assistance.

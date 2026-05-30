@@ -1,0 +1,20 @@
+{
+  "name": "photorank-pwa",
+  "private": true,
+  "version": "0.4.0",
+  "type": "module",
+  "description": "PhotoRank — React PWA frontend. Pick the best shot, instantly.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}

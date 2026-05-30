@@ -40,8 +40,9 @@ set mode.
 | HEIC | `image/heic` | Common iPhone format |
 
 **Max file size per image:** 10 MB (enforced at the API layer in Phase 2).
-**Client-side compression:** Phase 4 will add compression before upload. Until
-then, raw files are accepted.
+**Client-side compression:** The Phase 3 PWA downscales each image to ~1.5 MP
+and re-encodes JPEG before upload (see Section 9). The API still accepts raw
+files, so the CLI and direct API callers are unaffected.
 **Deletion policy:** Every image file on the server must be deleted immediately
 after scoring completes — success or failure. This is non-negotiable. No temp
 files, no caches, no logs of image content.
@@ -525,3 +526,98 @@ These rules apply in every phase and cannot be relaxed:
 
 Loaded via `python-dotenv` from `.env` in the project root. Never hardcoded,
 never committed. `.env` is in `.gitignore`.
+
+---
+
+## 9. Frontend PWA (Phase 3)
+
+**Location:** `frontend/`
+**Stack:** React 18 + Vite, plain CSS (no UI framework). Mobile-first, 390px base.
+**Build:** `npm run build` → `frontend/dist`. Dev: `npm run dev`.
+**API base:** `VITE_API_BASE` env var, default `https://photorank.job-joseph.com`.
+
+### 9.1 Screens
+
+A single state machine (`src/App.jsx`): `upload → loading → results`, plus a
+graceful `error` state.
+
+1. **Upload** — tagline, drag/drop or tap picker, file-count validation
+   (2–20, inline error), profile selector (`family` / `portrait` / `travel` /
+   `event`), primary "Rank N photos" action.
+2. **Loading** — animated stage progress mirroring the backend pipeline
+   (`Decoding photos` → `Detecting subjects` → `Scoring axes` → `Ranking`).
+   Because `/rank` is a single blocking call, the bar eases toward ~92% while
+   in flight and completes when the response lands. `Scoring axes` (Gemini) is
+   omitted when ≤6 files are selected — a cosmetic burst guess; the server
+   still makes the authoritative burst/set decision. Subtitle: "Scoring via
+   PhotoRank AI".
+3. **Results** — hero №1 card (photo, `final_score`, profile, `notes` in
+   quotes) and runners-up cards that expand to the full score breakdown.
+
+### 9.2 Request
+
+`POST {API_BASE}/rank`, `multipart/form-data`:
+- `files` — the compressed images (field name exactly `files`).
+- `profile` — the selected profile id.
+- `mode` is **omitted** so the server auto-detects (Section 0).
+
+### 9.3 Client-side compression
+
+Each image is downscaled to ≤ ~1.5 MP (`COMPRESS_MAX_PIXELS = 1_500_000`) and
+re-encoded as JPEG at quality 0.85 via `<canvas>`. The **original filename is
+preserved** so the response `photo_id` maps back to the local preview. The same
+compressed blob is both uploaded and shown on screen, so the user sees exactly
+what was scored. HEIC is converted in the process (it is otherwise unrenderable
+in most browsers). If decode fails, the original file is uploaded untouched and
+the UI falls back to a gradient placeholder for that photo.
+
+### 9.4 Score breakdown rendering (the transparency contract)
+
+The breakdown is rendered **dynamically from the response `score_breakdown`** —
+never hardcoded — so both modes work (set mode: 6 axes, including zero-weight
+`camera_engagement`; burst mode: `face_sharpness` / `sharpness` /
+`face_exposure` / `exposure`).
+
+Per row:
+- **Bar width = contribution.** Scaled so the heaviest axis at a perfect 10
+  (`maxContrib = max(weight) × 10`) fills the track:
+  `widthPct = contribution / maxContrib × 100`.
+- **Dashed cap = the axis's own maximum** on the same scale:
+  `capPct = (weight × 10) / maxContrib × 100`.
+- The explicit math is shown: `raw × weight = contribution`
+  (e.g. `9.0 × 0.15 = 1.35`), using `effective_weight` so the identity holds.
+- Legend: "Bar width = weight × raw score · Dashed = axis max".
+- Gemini-sourced axes are tinted with the accent colour; zero-weight axes are
+  shown muted (scored but not counted for this profile).
+
+Burst mode has no `notes`; a short fallback blurb is synthesised from the
+highest-contribution axis.
+
+### 9.5 Error handling
+
+`src/api.js` maps HTTP status to user-facing copy — raw server detail and
+stack traces are never surfaced:
+
+| Condition | Shown to user |
+|---|---|
+| `navigator.onLine === false` at submit | "You're offline. Connect to the internet to score your photos." |
+| 422 | "Those photos couldn't be accepted. Use 2–20 images in JPEG, PNG, WebP, or HEIC." |
+| 500 | "Scoring is temporarily unavailable. Please try again in a moment." |
+| 502 | "The scoring engine didn't respond. Please try again in a moment." |
+| network / parse / empty `ranked` | Generic "please try again" message |
+
+### 9.6 PWA requirements
+
+- `public/manifest.webmanifest` — name, `theme_color`/`background_color`
+  `#f6f4ef`, 192 & 512 icons (`any maskable`), `display: standalone`.
+- `public/sw.js` — caches the app shell (HTML, hashed assets, icons, fonts)
+  so the **upload screen works offline**; an offline banner and the offline
+  error state prompt the user to connect to score. **The `/rank` API is never
+  cached** (the SW bypasses the `job-joseph.com` host and all non-GET requests).
+- Add-to-Home-Screen prompt is offered after the first successful ranking
+  (`beforeinstallprompt` on Chrome/Android; a manual hint on iOS Safari).
+
+### 9.7 Client-side privacy
+
+Previews are in-memory object URLs, revoked on reset. No history, no accounts,
+no persistence — consistent with the Section 7 image-handling rules.

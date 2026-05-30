@@ -3,6 +3,20 @@
 A self-hosted photo ranking tool that gets you from a pile of burst shots to a
 confident pick — in under 30 seconds.
 
+## Project Structure
+
+New here? Start in the right place:
+
+- **[core/](core/)** and **[api/](api/)** — backend work. `core/` is the scoring
+  engine (ingest, deterministic scoring, Gemini, ranking); `api/` is the FastAPI
+  wrapper. Both run on Python.
+- **[frontend/](frontend/)** — UI work. The React + Vite mobile PWA. See
+  [frontend/README.md](frontend/README.md) to run it.
+- **[SPECS.md](SPECS.md)** — the precise technical contract for every layer,
+  including the `POST /rank` API and the frontend's rendering rules.
+- **[CLAUDE.md](CLAUDE.md)** — full project context: architecture decisions, the
+  two-mode scoring rationale, and everything needed to resume work.
+
 ## The Problem
 
 After a day of shooting on a phone, you end up with 100–200 photos. Culling
@@ -132,15 +146,31 @@ Rank photos:
 
 ```bash
 curl -X POST http://localhost:8007/rank \
-  -F "images=@photo1.jpg" \
-  -F "images=@photo2.jpg" \
-  -F "images=@photo3.jpg" \
+  -F "files=@photo1.jpg" \
+  -F "files=@photo2.jpg" \
+  -F "files=@photo3.jpg" \
   -F "profile=family"
 ```
 
-The `mode` parameter is optional. When omitted, the API auto-detects burst mode
-if ≤6 photos all have EXIF timestamps within 10 seconds of each other; otherwise
-it uses set mode. Pass `mode=burst` or `mode=set` to override.
+The upload field is `files` (2–20 images). The `mode` parameter is optional:
+when omitted, the API auto-detects burst mode if ≤6 photos all have EXIF
+timestamps within 10 seconds of each other; otherwise it uses set mode. Pass
+`mode=burst` or `mode=set` to override.
+
+### Frontend PWA (Phase 3)
+
+The mobile-first React PWA lives in `frontend/` and talks to the API above.
+
+```bash
+cd frontend
+npm install
+npm run dev      # local dev server
+npm run build    # production build → frontend/dist
+```
+
+By default the PWA targets the live API at `https://photorank.job-joseph.com`.
+Point it at a local backend with `VITE_API_BASE=http://localhost:8007 npm run dev`.
+See [frontend/README.md](frontend/README.md) for details.
 
 ## Privacy
 
@@ -154,10 +184,17 @@ no telemetry.
 **Phase 1 (CLI pipeline) is complete and validated on real photos.**
 **Phase 2 (FastAPI + Pi deployment) is complete.** API is live at
 `https://photorank.job-joseph.com`. Validated end-to-end on a real iPhone.
+**Phase 3 (React PWA) is built** — upload, profile selection, animated
+pipeline progress, hero result, and expandable per-axis score breakdowns,
+with client-side compression and offline app shell. On-device golden-path
+validation is the remaining gate.
 
 ## What's Coming
 
-- **Phase 3** — Mobile-first PWA: tap to upload, swipe through results
+- **Phase 3 gate** — end-to-end test on a real phone; a non-technical person
+  completes the full flow unaided; Lighthouse PWA (installable) audit.
+- **Beyond** — see the Future section in [ROADMAP.md](ROADMAP.md): full-day
+  bulk cull (moment grouping), native wrappers, custom preference model.
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.
 
@@ -176,12 +213,17 @@ photorank/
 ├── output/             ranked results written here
 ├── api/
 │   └── main.py         Phase 2: FastAPI wrapper (POST /rank, GET /health)
-└── frontend/           Phase 3: React PWA (stub)
+└── frontend/           Phase 3: React + Vite mobile PWA
+    ├── index.html      app entry (fonts, manifest, theme-color)
+    ├── src/            screens/, components/, api.js, compress.js, styles.css
+    ├── public/         manifest.webmanifest, sw.js, icons/
+    └── _design/        archived Claude Design reference (not production)
 ```
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Phase 2 is open for contributions.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Phase 3 (frontend) is open for
+contributions.
 
 ## License
 

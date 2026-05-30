@@ -3,9 +3,9 @@
 ## Current Status
 
 **Phase 1 (CLI pipeline) is complete.** **Phase 2 (FastAPI + Pi deployment) is
-complete** — API is live at `https://photorank.job-joseph.com`. **Phase 3 (PWA
-frontend) is the current focus** and open for contributions — open an issue to
-discuss before starting work.
+complete** — API is live at `https://photorank.job-joseph.com`. **Phase 3 (React
+PWA) is built** (`frontend/`); the remaining gate is on-device validation. It is
+open for contributions — open an issue to discuss before starting work.
 
 ---
 
@@ -27,8 +27,18 @@ Test with:
 ```bash
 curl http://localhost:8007/health
 curl -X POST http://localhost:8007/rank \
-  -F "images=@photo1.jpg" -F "images=@photo2.jpg" -F "profile=family"
+  -F "files=@photo1.jpg" -F "files=@photo2.jpg" -F "profile=family"
 ```
+
+**Frontend (PWA):**
+```bash
+cd frontend
+npm install
+npm run dev      # dev server
+npm run build    # production build → frontend/dist
+```
+Point the PWA at a local backend with
+`VITE_API_BASE=http://localhost:8007 npm run dev`.
 
 ---
 
@@ -98,6 +108,36 @@ Burst mode signals live in `core/score_burst.py`. Each signal must:
 4. Be added to `BURST_WEIGHTS` in `core/profiles.py` with weights that still
    sum to 1.0 (adjust other burst weights accordingly).
 5. Be documented in SPECS.md Section 3b with the normalization formula.
+
+---
+
+## Working on the Frontend (PWA)
+
+The frontend lives in `frontend/` (React + Vite, plain CSS — no UI framework).
+Full contract is in [SPECS.md](SPECS.md) Section 9.
+
+Rules:
+1. **Design tokens are the source of truth.** Colours, type, and spacing come
+   from `src/styles.css` `:root`, extracted from the approved Claude Design
+   prototype now archived in `frontend/_design/`. Don't introduce new tokens
+   without a design reason; never import from `_design/` (it is reference only).
+2. **Render the breakdown from the API, never hardcode axes or weights.** The
+   `score_breakdown` object drives the bars. Bar width = contribution, with the
+   explicit `raw × weight = contribution` math and a dashed axis-max cap. This
+   must keep working for both burst and set mode.
+3. **Never surface raw server errors.** Map statuses to friendly copy in
+   `src/api.js`. The upload screen must work offline; scoring offline shows a
+   "connect to score" state.
+4. **Client privacy.** Preview object URLs are revoked on reset. Do not add any
+   persistence (history, localStorage of results, caching of `/rank`). The
+   service worker must never cache the API.
+5. **Compression stays on.** Images are downscaled (~1.5 MP) and re-encoded
+   JPEG before upload; the original filename must be preserved so `photo_id`
+   maps back to the preview.
+6. **Test the golden path on a real phone** (iPhone Safari) before submitting —
+   synthetic desktop testing does not validate the mobile flow or HEIC handling.
+
+Regenerate PWA icons with `node scripts/gen-icons.mjs` (no dependencies).
 
 ---
 

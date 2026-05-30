@@ -35,12 +35,15 @@ it did. Never show only a final number.
 
 - **Phase 1 (CLI pipeline): Complete. Validated on real photos.**
 - **Phase 2 (FastAPI + Pi deployment): Complete. Validated on real device.**
-- **Phase 3 (React PWA): In progress — next focus.**
+- **Phase 3 (React PWA): Built. On-device golden-path validation is the remaining gate.**
 - Two-mode pipeline: `--mode burst` (deterministic only) and `--mode set` (default, Gemini)
 - Phase 1 gate passed: both modes validated, top pick agreement >80% on real test sets
 - Phase 2 gate passed: end-to-end validated on iPhone via `photorank.job-joseph.com`
 - `api/main.py`: `POST /rank`, `GET /health`, port **8007**, live at `photorank.job-joseph.com`
-- `frontend/App.jsx` is now unblocked — Phase 3 is the current focus
+- `frontend/` is a React + Vite PWA: upload → loading → results, with client-side
+  compression, dynamic per-axis breakdowns, manifest + service worker (offline shell)
+- Remaining Phase 3 work: on-device test (iPhone Safari), Lighthouse PWA audit,
+  non-technical user completes the flow unaided
 
 ---
 
@@ -130,9 +133,29 @@ photorank/
 ├── input/                  ← drop test photos here; contents git-ignored
 ├── output/                 ← ranked results written here; contents git-ignored
 ├── api/
-│   └── main.py             ← Phase 2 — FastAPI wrapper (in progress)
-└── frontend/
-    └── App.jsx             ← Phase 3 stub — do not implement until Phase 2 gate
+│   └── main.py             ← Phase 2 — FastAPI wrapper (complete)
+└── frontend/               ← Phase 3 — React + Vite mobile PWA (built)
+    ├── index.html          ← entry: viewport, fonts, manifest, theme-color
+    ├── vite.config.js
+    ├── package.json
+    ├── public/
+    │   ├── manifest.webmanifest  ← name, icons, theme_color #f6f4ef
+    │   ├── sw.js                 ← offline app shell; never caches /rank
+    │   └── icons/                ← icon-192.png, icon-512.png (any+maskable)
+    ├── scripts/
+    │   └── gen-icons.mjs         ← regenerates the PWA icons (no deps)
+    ├── src/
+    │   ├── main.jsx              ← mount + service-worker registration
+    │   ├── App.jsx               ← state machine: upload → loading → results
+    │   ├── styles.css            ← all design tokens + component CSS
+    │   ├── config.js             ← API_BASE, PROFILES, axis labels, limits
+    │   ├── api.js                ← rankPhotos() — multipart POST + error mapping
+    │   ├── compress.js           ← client-side downscale ~1.5 MP, HEIC→JPEG
+    │   ├── usePwaInstall.js       ← Add-to-Home-Screen prompt (after 1st success)
+    │   ├── lib/breakdown.js      ← normalizes API score_breakdown → bar rows
+    │   ├── screens/              ← UploadScreen, LoadingScreen, ResultsScreen
+    │   └── components/           ← HeroCard, RankCard, AxisBar, MessageScreen
+    └── _design/                  ← archived Claude Design reference (NOT production)
 ```
 
 ---
@@ -241,6 +264,53 @@ See SPECS.md Section 5 for the complete contract and top-level output wrapper fo
 
 The `notes` field must be one specific, actionable sentence. The Gemini prompt
 enforces this with examples of good vs bad notes.
+
+---
+
+## Phase 3 Frontend — React PWA
+
+Mobile-first PWA (390px base) in `frontend/`. Built from the approved Claude
+Design prototype, now archived in `frontend/_design/` (`PhotoRank.HTML`,
+`App.jsx`, `ios-frame.jsx`, `image-slot.js`) — reference only, never imported.
+
+**Stack:** React 18 + Vite, plain CSS (no UI framework). Fonts: Instrument
+Serif (editorial headlines), Geist (body), Geist Mono (labels). All design
+tokens live in `src/styles.css` `:root` (warm off-white `--bg #f6f4ef`,
+near-black `--ink`, olive `--accent`).
+
+**Three screens** (state machine in `src/App.jsx`):
+1. **Upload** — tagline, dashed drop zone (tap or drag), 2–20 file validation
+   (inline error), profile selector (family/portrait/travel/event).
+2. **Loading** — "Reading N photos for the moment that lands", animated stage
+   progress (Decoding → Detecting subjects → Scoring axes → Ranking; the
+   Gemini "Scoring axes" step is hidden when ≤6 files, a cosmetic burst guess),
+   per-photo thumbnails that check off as they compress. Subtitle is
+   "Scoring via PhotoRank AI" — **not** "on-device".
+3. **Results** — hero №1 card (real photo, final score, profile, AI note in
+   quotes) + runners-up cards that expand to the full score breakdown.
+
+**Key contracts:**
+- **Breakdown is rendered dynamically from the API's `score_breakdown`** — never
+  hardcoded. Works for both modes (6 set-mode axes incl. zero-weight
+  `camera_engagement`; 4 burst-mode face/full axes). See `src/lib/breakdown.js`.
+- **Bar width = contribution** (weight × raw), with the explicit math on each
+  row and a dashed cap at the axis max. Gemini axes use the accent colour.
+- **Mode is omitted from the request** so the server auto-detects (EXIF).
+- **Client-side compression** (`src/compress.js`) downscales to ~1.5 MP and
+  re-encodes JPEG; this both shrinks the upload and yields a browser-renderable
+  preview (HEIC otherwise won't display). Filename is preserved so the server's
+  `photo_id` maps back to each preview. On decode failure: send the original,
+  fall back to a gradient placeholder.
+- **Errors are mapped to friendly copy** in `src/api.js` (422/500/502 →
+  user-facing messages); raw server detail is never shown.
+- **Privacy on the client:** previews are object URLs, revoked on reset. No
+  history, no accounts, no persistence.
+- **PWA:** `public/manifest.webmanifest` + `public/sw.js` (offline app shell;
+  **never caches `/rank`**). Add-to-Home-Screen prompt fires after the first
+  successful ranking (`src/usePwaInstall.js`).
+
+**Run:** `cd frontend && npm install && npm run dev` (or `npm run build`).
+Override the API with `VITE_API_BASE` (default `https://photorank.job-joseph.com`).
 
 ---
 
