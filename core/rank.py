@@ -275,9 +275,14 @@ def main() -> None:
                 except ValueError as e:
                     print(f"  [rank] warning: {e}", file=sys.stderr)
 
+            if not all_scores:
+                print("[rank] no images could be scored.", file=sys.stderr)
+                sys.exit(1)
+
+            blur_gate_bypassed = False
+            blurry_ids: list[str] = []
             if args.no_blur_filter:
-                sharp_scores  = all_scores
-                blurry_ids: list[str] = []
+                sharp_scores = all_scores
             else:
                 sharp_scores  = [s for s in all_scores if s["blur_raw"] >= args.blur_threshold]
                 blurry_scores = [s for s in all_scores if s["blur_raw"] <  args.blur_threshold]
@@ -287,26 +292,30 @@ def main() -> None:
                     f"(threshold={args.blur_threshold})",
                     file=sys.stderr,
                 )
-
-            if not sharp_scores:
-                print(
-                    "[rank] all images are below the blur threshold. "
-                    "Lower --blur-threshold or use --no-blur-filter.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                # The blur gate thins a set; it must not refuse to rank. If nothing
+                # clears the threshold, rank everything and pick the least-blurry.
+                if not sharp_scores:
+                    print(
+                        f"[rank] all {len(all_scores)} image(s) below blur threshold "
+                        f"({args.blur_threshold}); ranking all anyway (gate bypassed).",
+                        file=sys.stderr,
+                    )
+                    sharp_scores       = all_scores
+                    blurry_ids         = []
+                    blur_gate_bypassed = True
 
             ranked = _rank_burst(sharp_scores)
             _print_burst_summary(ranked, blurry_ids)
 
             output_data = {
-                "mode":           "burst",
-                "burst_weights":  BURST_WEIGHTS,
-                "blur_threshold": None if args.no_blur_filter else args.blur_threshold,
-                "total_photos":   len(photos),
-                "scored_photos":  len(sharp_scores),
-                "skipped_blurry": len(blurry_ids),
-                "ranked":         ranked,
+                "mode":               "burst",
+                "burst_weights":      BURST_WEIGHTS,
+                "blur_threshold":     None if args.no_blur_filter else args.blur_threshold,
+                "blur_gate_bypassed": blur_gate_bypassed,
+                "total_photos":       len(photos),
+                "scored_photos":      len(sharp_scores),
+                "skipped_blurry":     len(blurry_ids),
+                "ranked":             ranked,
             }
 
         # ------------------------------------------------------------------
@@ -325,9 +334,14 @@ def main() -> None:
                 except ValueError as e:
                     print(f"  [rank] warning: {e}", file=sys.stderr)
 
+            if not all_technical:
+                print("[rank] no images could be scored.", file=sys.stderr)
+                sys.exit(1)
+
+            blur_gate_bypassed = False
+            blurry_ids = []
             if args.no_blur_filter:
-                sharp_technical  = all_technical
-                blurry_ids = []
+                sharp_technical = all_technical
             else:
                 sharp_technical  = [t for t in all_technical if t["blur_raw"] >= args.blur_threshold]
                 blurry_technical = [t for t in all_technical if t["blur_raw"] <  args.blur_threshold]
@@ -337,14 +351,17 @@ def main() -> None:
                     f"(threshold={args.blur_threshold})",
                     file=sys.stderr,
                 )
-
-            if not sharp_technical:
-                print(
-                    "[rank] all images are below the blur threshold. "
-                    "Lower --blur-threshold or use --no-blur-filter.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                # Gate thins the set before Gemini; it must not refuse the whole
+                # batch. If nothing clears the threshold, score everything.
+                if not sharp_technical:
+                    print(
+                        f"[rank] all {len(all_technical)} image(s) below blur threshold "
+                        f"({args.blur_threshold}); scoring all anyway (gate bypassed).",
+                        file=sys.stderr,
+                    )
+                    sharp_technical    = all_technical
+                    blurry_ids         = []
+                    blur_gate_bypassed = True
 
             print(
                 f"[rank] scoring {len(sharp_technical)} photo(s) via Gemini "
@@ -370,14 +387,15 @@ def main() -> None:
             _print_summary(ranked, blurry_ids)
 
             output_data = {
-                "mode":           "set",
-                "profile":        args.profile,
-                "weights":        weights,
-                "blur_threshold": None if args.no_blur_filter else args.blur_threshold,
-                "total_photos":   len(photos),
-                "scored_photos":  len(merged),
-                "skipped_blurry": len(blurry_ids),
-                "ranked":         ranked,
+                "mode":               "set",
+                "profile":            args.profile,
+                "weights":            weights,
+                "blur_threshold":     None if args.no_blur_filter else args.blur_threshold,
+                "blur_gate_bypassed": blur_gate_bypassed,
+                "total_photos":       len(photos),
+                "scored_photos":      len(merged),
+                "skipped_blurry":     len(blurry_ids),
+                "ranked":             ranked,
             }
 
         # ------------------------------------------------------------------

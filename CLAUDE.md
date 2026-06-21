@@ -93,7 +93,11 @@ For 2–6 near-identical photos from the same moment. Gemini is skipped entirely
 For 7+ photos, or any varied photo set where semantic differences exist.
 
 **Layer 1 — deterministic (score_tech.py):** sharpness, exposure, blur_raw.
-Blur gate excludes images below threshold before Gemini is called.
+Blur gate excludes images below threshold before Gemini is called. **The gate
+only thins a set — if every photo is below threshold it is bypassed and all are
+ranked anyway (`blur_gate_bypassed: true` in the response). A batch is only
+rejected when no image can be scored at all. Applies to both API and CLI, both
+modes.** See LEARNINGS.md.
 
 **Layer 2 — semantic (score_vision.py, Gemini 2.0 Flash):** Only what Gemini
 can reliably judge across varied photos:
@@ -162,31 +166,40 @@ photorank/
 
 ## Phase 1 CLI — How to Run
 
+> **Invocation:** run from the repo root with the project venv and `PYTHONPATH=.`
+> set — bare `python core/rank.py` fails because `core/rank.py` does
+> `from core.profiles import ...`, which needs the repo root on `sys.path`.
+> Correct form:
+>
+> ```bash
+> PYTHONPATH=. ./venv/bin/python core/rank.py --profile <profile>
+> ```
+
 ```bash
 # Burst mode — deterministic only, no Gemini (2–6 near-identical shots)
-python core/rank.py --mode burst
+PYTHONPATH=. ./venv/bin/python core/rank.py --mode burst
 
 # Burst mode with explicit input path
-python core/rank.py --mode burst --input /path/to/burst_set
+PYTHONPATH=. ./venv/bin/python core/rank.py --mode burst --input /path/to/burst_set
 
 # Set mode — full pipeline with Gemini (default)
-python core/rank.py --profile family
+PYTHONPATH=. ./venv/bin/python core/rank.py --profile family
 
 # Explicit input path
-python core/rank.py --input /path/to/photos --profile family
+PYTHONPATH=. ./venv/bin/python core/rank.py --input /path/to/photos --profile family
 
 # Custom weights (all six axes required)
-python core/rank.py --profile custom \
+PYTHONPATH=. ./venv/bin/python core/rank.py --profile custom \
   --weights '{"sharpness":0.2,"exposure":0.1,"expression":0.25,"composition":0.2,"subject_focus":0.2,"camera_engagement":0.05}'
 
 # Tighten blur gate
-python core/rank.py --profile portrait --blur-threshold 150
+PYTHONPATH=. ./venv/bin/python core/rank.py --profile portrait --blur-threshold 150
 
 # Save output to output/
-python core/rank.py --profile family --output output/results.json
+PYTHONPATH=. ./venv/bin/python core/rank.py --profile family --output output/results.json
 
 # Deterministic scorer standalone (no Gemini call)
-python core/score_tech.py input/ --threshold 100
+PYTHONPATH=. ./venv/bin/python core/score_tech.py input/ --threshold 100
 ```
 
 ---

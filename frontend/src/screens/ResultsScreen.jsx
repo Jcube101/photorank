@@ -23,14 +23,33 @@ export default function ResultsScreen({ result, previews, onRestart }) {
   );
   const winnerUrl = previewFor(winner.photo_id);
 
-  function saveWinner() {
+  async function saveWinner() {
     if (!winnerUrl) return;
-    const a = document.createElement("a");
-    a.href = winnerUrl;
-    a.download = winner.photo_id || "photorank-winner.jpg";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    // Download from a fresh object URL built off a re-read Blob rather than the
+    // live preview URL. The preview URL is owned by the document's blob store
+    // and referencing it directly in an <a download> was a no-op in browser
+    // Chrome; copying into a new Blob + URL gives a clean, downloadable handle.
+    let freshUrl;
+    try {
+      const blob = await (await fetch(winnerUrl)).blob();
+      freshUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = freshUrl;
+      a.download = winner.photo_id || "photorank-winner.jpg";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch {
+      // Last resort: point straight at the preview URL.
+      const a = document.createElement("a");
+      a.href = winnerUrl;
+      a.download = winner.photo_id || "photorank-winner.jpg";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      if (freshUrl) setTimeout(() => URL.revokeObjectURL(freshUrl), 10000);
+    }
   }
 
   return (

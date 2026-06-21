@@ -175,4 +175,10 @@ are equal.
 
 ---
 
+**Discovery:** The blur gate rejecting all-soft batches looked like a 2-photo minimum bug because most 3+ photo sets have at least one sharp frame. Root cause was both photos scoring `blur_raw` 70.6, below the 100 threshold — so the gate excluded both, leaving nothing to rank, and `/rank` returned 422. A 2-shot burst is far more likely to be uniformly soft than a larger set, which is exactly why "2 fails, 3+ works" appeared count-driven when it was really content-driven.
+**Impact:** The blur gate now falls back to ranking all photos when every photo is soft, rather than returning 422 — its job is to *thin* a set (drop soft frames when sharp ones exist), not to refuse to rank. The response carries `blur_gate_bypassed: true` when this fires (transparency, no silent failure). Hard failure now only occurs on corrupt/unreadable files (no image scoreable at all). Fixed in both the API and the CLI, in both burst and set mode.
+**Date:** June 2026
+
+---
+
 *Add new entries above this line as discoveries are made.*

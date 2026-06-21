@@ -43,6 +43,12 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
 
+  // Never touch blob:/data: requests. Object URLs (image previews, the
+  // "Save winner" download) belong to the document's blob store and are not
+  // resolvable from the worker — intercepting them breaks the fetch, which is
+  // why previews showed as placeholders and Save did nothing in the browser.
+  if (url.protocol !== "http:" && url.protocol !== "https:") return;
+
   // Never cache the scoring API.
   if (url.hostname.endsWith("job-joseph.com")) return;
 

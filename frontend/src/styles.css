@@ -827,6 +827,29 @@ body {
   content: none;
 }
 
+.hero-breakdown-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 0 0;
+  border: none;
+  border-top: 1px solid var(--line);
+  background: none;
+  cursor: pointer;
+  color: var(--ink);
+}
+.hero-card.open .hero-breakdown-toggle .chev {
+  transform: rotate(180deg);
+  color: var(--ink);
+}
+/* Hero body already pads 22px; cancel the breakdown's own horizontal inset. */
+.hero-card .breakdown {
+  padding: 4px 0 0;
+  border-top: none;
+  margin-top: 0;
+}
+
 .ranked-list-head {
   display: flex;
   align-items: center;
@@ -909,12 +932,8 @@ body {
   color: var(--ink);
   line-height: 1.3;
   letter-spacing: -0.005em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
-  -webkit-box-orient: vertical;
+  /* Full note shown — it must be readable without expanding the breakdown. */
+  overflow-wrap: anywhere;
 }
 .rank-sub {
   font-size: 11px;

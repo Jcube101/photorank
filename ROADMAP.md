@@ -84,7 +84,7 @@ Gemini is only called on photos that pass the blur gate.
 
 ---
 
-## Phase 3 — Mobile-First PWA ✓ BUILT (gate pending device validation)
+## Phase 3 — Mobile-First PWA ✓ BUILT — phone testing passed
 
 **Goal:** A usable, fast UI that runs in a phone browser. No App Store required.
 
@@ -113,16 +113,24 @@ the frontend makes no auth-specific code changes.
 - Native app (App Store / Play Store)
 
 **Definition of done:**
-- [ ] Golden path works on iPhone Safari: pick photos, select profile, get ranked results
-- [ ] Score breakdown is readable and makes sense to a non-technical user
-- [ ] Notes are displayed prominently — not buried
+- [x] Golden path works: pick photos, select profile, get ranked results
+- [x] Score breakdown is readable and makes sense to a non-technical user
+- [x] Notes are displayed prominently — not buried
 - [ ] Upload + score + display completes in <90 seconds for 20 photos on a phone
 - [ ] Passes Lighthouse PWA audit (installable)
 - [x] Works offline with a sensible error state (not just a blank screen)
 
+**Phone testing — confirmed (June 2026):**
+- [x] Images display correctly in both browser and standalone PWA (service worker
+      no longer intercepts `blob:` preview URLs)
+- [x] Score breakdown visible on all cards — hero №1 now expands like runners-up
+- [x] PWA installs to the home screen on Android
+- [x] 2-photo minimum works correctly after the blur-gate fix (was a false 422)
+- [x] Save winner works in PWA mode (downloads from a fresh Blob handle)
+
 Build verified locally (`npm run build`), breakdown bar math validated against
-SPECS §5.3, and the served bundle/manifest/SW/icons confirmed. The remaining
-checkboxes require testing on a real device.
+SPECS §5.3, and the served bundle/manifest/SW/icons confirmed. Remaining open
+items: a timed 20-photo run on-device (<90s) and a formal Lighthouse PWA audit.
 
 **Phase 3 gate:** End-to-end test on a real phone. At least one non-technical
 person completes the full flow without assistance.
