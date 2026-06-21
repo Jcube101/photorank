@@ -253,6 +253,19 @@ to the same function used for full-image exposure).
 **Auth:** `GEMINI_API_KEY` environment variable
 **Batch size:** Up to 8 images per request
 
+**Concurrency:** Batches are independent and network-bound, so they are
+dispatched concurrently via a `ThreadPoolExecutor`; total Gemini time is the
+slowest single batch rather than the sum (e.g. 20 photos ≈ 40s instead of
+~125s). Results are reassembled in batch order, so output stays deterministic.
+
+| Env var | Default | Controls |
+|---|---|---|
+| `MAX_CONCURRENCY` | `4` | Maximum concurrent Gemini batch calls. Override by setting `MAX_CONCURRENCY=N` in `.env`. |
+
+At the current 20-photo upload limit a batch set is at most 3 (`ceil(20/8)`),
+so values above 3 have no effect today — the cap matters only if `BATCH_SIZE`
+or the photo limit changes.
+
 ### 4.1 What Gemini Scores
 
 Gemini scores **only** the three axes it can reliably judge from a visual
@@ -536,8 +549,9 @@ These rules apply in every phase and cannot be relaxed:
 
 | Variable | Required | Notes |
 |---|---|---|
-| `GEMINI_API_KEY` | Yes | Gemini API key |
-| `GEMINI_MODEL`   | No  | Model name (default: `gemini-2.0-flash`) |
+| `GEMINI_API_KEY`  | Yes | Gemini API key |
+| `GEMINI_MODEL`    | No  | Model name (default: `gemini-2.0-flash`) |
+| `MAX_CONCURRENCY` | No  | Max concurrent Gemini batch calls (default: `4`; see §4) |
 
 Loaded via `python-dotenv` from `.env` in the project root. Never hardcoded,
 never committed. `.env` is in `.gitignore`.

@@ -181,4 +181,28 @@ are equal.
 
 ---
 
+**Discovery:** Profiles are *only* weights — a set-mode run already scores every photo on all six axes regardless of profile (`camera_engagement` is even returned at weight 0 in profiles that don't use it), so switching profiles needs no re-scoring.
+**Impact:** The results screen got an on-device profile switcher that re-ranks the existing result by pure client-side re-weight — instant, no re-upload, no Gemini call, works offline. `rerankByProfile()` mirrors `core/rank.py:rank_photos` exactly (same weighted sum, round-to-3, and `(final_score desc, relative_rank)` tiebreak); verified to reproduce the server's `final_score` to the digit. Two honest limits, surfaced in the UI: (1) `travel` is the only profile with a Gemini hint, so re-ranking *into* travel from another profile's raw scores is directional, not identical — flagged with an "approximate" note; (2) burst-mode results carry 4 face/full axes that don't map onto the 6-axis profiles, so the switcher is hidden for them.
+**Date:** June 2026
+
+---
+
+**Discovery:** Android can kill a PWA's process during a tab switch, dropping the user back to the upload screen and losing their results.
+**Impact:** The last result JSON is persisted to **`sessionStorage`** (not `localStorage`) under `photorank_last_result`, restored on load, and cleared on "New batch". `sessionStorage` clears when the tab closes, so it bridges a process kill *within* a live session without becoming durable history — consistent with the no-persistence privacy intent. Only scores/notes/photo_ids are stored, never pixel data. The full `score_breakdown` (incl. raw axis scores) is preserved, so the profile switcher keeps working after a restore. Image previews are `blob:` URLs that can't survive the kill, so a restored screen falls back to gradient placeholders and disables "Save winner" — the ranking, scores, and breakdowns remain fully intact.
+**Date:** June 2026
+
+---
+
+**Discovery:** Showing a greyed-out 0% row for axes a profile doesn't weight (e.g. `camera_engagement` outside `family`) confuses more than it informs — a row that contributes nothing reads as a bug.
+**Impact:** `buildBreakdown` filters axes to `weight > 0`, so the breakdown shows only axes that actually move the score. It's dynamic: as the profile switcher changes weights, axes appear/disappear accordingly. Total and bar scaling are unaffected (zero-weight axes contribute 0 and have a zero cap).
+**Date:** June 2026
+
+---
+
+**Discovery:** Gemini batches were running sequentially. 20 photos = 3 batches × ~40s each = 125s total. The batches are network-bound and independent (each scores its own ≤8 photos, no cross-batch dependency).
+**Impact:** A `ThreadPoolExecutor` in `score_vision.py` runs the batches concurrently, collapsing total Gemini time to the slowest single batch (~37–47s) instead of their sum. Pipeline total dropped from ~130s to 37–52s server-side. Confirmed **59 seconds end-to-end on a Samsung phone via the PWA** (includes Cloudflare tunnel latency + client-side compression). No scoring logic changed: same prompts, batch size, and parsing; results are reassembled in batch order so output stays deterministic, and a single batch skips the pool. Concurrency is capped by `MAX_CONCURRENCY` (default 4) to stay within rate limits.
+**Date:** June 2026
+
+---
+
 *Add new entries above this line as discoveries are made.*

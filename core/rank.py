@@ -37,6 +37,7 @@ Usage:
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from core.profiles import ALL_AXES, AXES_DETERMINISTIC, BURST_WEIGHTS, PROFILES, validate_weights
@@ -244,13 +245,15 @@ def main() -> None:
 
     from core.ingest import cleanup, ingest
 
+    _perf_t0 = time.perf_counter()
     print(f"[rank] ingesting images from {args.input}...", file=sys.stderr)
+    _t = time.perf_counter()
     try:
         photos, temp_dir = ingest(args.input)
     except ValueError as e:
         print(f"[rank] error: {e}", file=sys.stderr)
         sys.exit(1)
-    print(f"[rank] {len(photos)} image(s) loaded", file=sys.stderr)
+    print(f"[perf] ingest: {time.perf_counter() - _t:.2f}s ({len(photos)} photos)", file=sys.stderr)
 
     if args.mode == "burst" and len(photos) > _BURST_MODE_MAX_PHOTOS:
         print(
@@ -326,6 +329,7 @@ def main() -> None:
             from core.score_vision import score_photos
 
             print("[rank] computing technical scores (sharpness / exposure)...", file=sys.stderr)
+            _t = time.perf_counter()
             all_technical: list[dict] = []
             for photo in photos:
                 try:
@@ -333,6 +337,7 @@ def main() -> None:
                     all_technical.append(tech)
                 except ValueError as e:
                     print(f"  [rank] warning: {e}", file=sys.stderr)
+            print(f"[perf] tech scoring: {time.perf_counter() - _t:.2f}s", file=sys.stderr)
 
             if not all_technical:
                 print("[rank] no images could be scored.", file=sys.stderr)
@@ -368,11 +373,14 @@ def main() -> None:
                 f"(profile={args.profile})...",
                 file=sys.stderr,
             )
+            _t = time.perf_counter()
             gemini_scores = score_photos(
                 [t["path"] for t in sharp_technical],
                 photo_ids=[t["photo_id"] for t in sharp_technical],
                 profile=args.profile,
             )
+            print(f"[perf] gemini total: {time.perf_counter() - _t:.2f}s", file=sys.stderr)
+            print(f"[perf] PIPELINE TOTAL: {time.perf_counter() - _perf_t0:.2f}s", file=sys.stderr)
 
             gemini_by_id = {s["photo_id"]: s for s in gemini_scores}
             merged: list[dict] = []

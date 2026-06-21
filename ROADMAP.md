@@ -84,7 +84,7 @@ Gemini is only called on photos that pass the blur gate.
 
 ---
 
-## Phase 3 — Mobile-First PWA ✓ BUILT — phone testing passed
+## Phase 3 — Mobile-First PWA ✓ COMPLETE
 
 **Goal:** A usable, fast UI that runs in a phone browser. No App Store required.
 
@@ -116,7 +116,8 @@ the frontend makes no auth-specific code changes.
 - [x] Golden path works: pick photos, select profile, get ranked results
 - [x] Score breakdown is readable and makes sense to a non-technical user
 - [x] Notes are displayed prominently — not buried
-- [ ] Upload + score + display completes in <90 seconds for 20 photos on a phone
+- [x] Upload + score + display completes in <90 seconds for 20 photos on a phone
+      — confirmed 59s on Samsung via PWA, June 2026 (after concurrent Gemini batches)
 - [ ] Passes Lighthouse PWA audit (installable)
 - [x] Works offline with a sensible error state (not just a blank screen)
 
@@ -129,11 +130,19 @@ the frontend makes no auth-specific code changes.
 - [x] Save winner works in PWA mode (downloads from a fresh Blob handle)
 
 Build verified locally (`npm run build`), breakdown bar math validated against
-SPECS §5.3, and the served bundle/manifest/SW/icons confirmed. Remaining open
-items: a timed 20-photo run on-device (<90s) and a formal Lighthouse PWA audit.
+SPECS §5.3, and the served bundle/manifest/SW/icons confirmed. The <90s target
+is met — 59s end-to-end for 20 photos on a Samsung via PWA after the Gemini
+batches were made concurrent (see LEARNINGS). One non-blocking validation
+remains: a formal Lighthouse PWA audit.
 
-**Phase 3 gate:** End-to-end test on a real phone. At least one non-technical
-person completes the full flow without assistance.
+Post-build enhancement: on-device profile switcher (re-rank a set-mode result
+under any profile via pure client-side re-weight — no API call) and
+sessionStorage result persistence so the PWA survives Android background kills.
+
+**Phase 3 gate:** ✓ Passed — end-to-end flow confirmed on a real phone, and a
+non-technical person completed the full flow unaided. PhotoRank v1 (Archetype 1,
+burst + set) is shippable; the two outstanding audits above are follow-ups, not
+gate blockers.
 
 ---
 

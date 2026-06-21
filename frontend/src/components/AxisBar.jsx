@@ -4,10 +4,10 @@
 // the user can see which signals are semantic vs. deterministic.
 
 export default function AxisBar({ axis }) {
-  const { label, raw, weight, contribution, isGemini, isZero, widthPct, capPct, source } = axis;
+  const { label, raw, weight, contribution, isGemini, widthPct, capPct, source } = axis;
 
   return (
-    <div className={"axis" + (isZero ? " muted-axis" : "")}>
+    <div className="axis">
       <div className="axis-name">
         {label}
         <span className="weight">{Math.round(weight * 100)}%</span>

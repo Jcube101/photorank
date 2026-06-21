@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shutil
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -136,6 +137,7 @@ async def rank_endpoint(
     weights: Optional[str] = Form(None),
 ) -> JSONResponse:
     # --- Input validation ---
+    _t_req = time.perf_counter()
     logger.info(
         "/rank received: files=%d profile=%s mode=%s",
         len(files), profile, mode if mode is not None else "auto",
@@ -198,10 +200,12 @@ async def rank_endpoint(
         logger.info("/rank resolved mode=%s for %d file(s)", resolved_mode, len(upload_paths))
 
         # --- Ingest: cv2.imread + cv2.imwrite strips EXIF automatically ---
+        _t_ingest = time.perf_counter()
         try:
             photos, ingest_temp_dir = ingest(upload_paths)
         except ValueError as exc:
             raise _reject(422, str(exc))
+        logger.info("[perf] ingest: %.2fs (%d photos)", time.perf_counter() - _t_ingest, len(photos))
 
         try:
             # Replace uuid-based photo_ids with original display names
@@ -230,6 +234,7 @@ async def rank_endpoint(
     finally:
         shutil.rmtree(upload_dir, ignore_errors=True)
 
+    logger.info("[perf] /rank TOTAL: %.2fs", time.perf_counter() - _t_req)
     return JSONResponse(content=output)
 
 
@@ -279,6 +284,7 @@ def _run_burst(photos: list[dict]) -> dict:
 
 
 def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
+    _t = time.perf_counter()
     all_technical: list[dict] = []
     for photo in photos:
         try:
@@ -286,6 +292,7 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
             all_technical.append(tech)
         except ValueError as exc:
             logger.warning("technical scoring skipped a photo: %s", exc)
+    logger.info("[perf] tech scoring: %.2fs", time.perf_counter() - _t)
 
     if not all_technical:
         raise _reject(422, "No images could be scored.")
@@ -303,6 +310,7 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
         )
         sharp_technical = all_technical
 
+    _t = time.perf_counter()
     try:
         gemini_scores = score_photos(
             [t["path"] for t in sharp_technical],
@@ -313,6 +321,7 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
         raise _reject(500, str(exc))
     except RuntimeError as exc:
         raise _reject(502, str(exc))
+    logger.info("[perf] gemini total: %.2fs (%d photos)", time.perf_counter() - _t, len(sharp_technical))
 
     gemini_by_id = {s["photo_id"]: s for s in gemini_scores}
     merged: list[dict] = []

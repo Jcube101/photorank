@@ -36,6 +36,61 @@ export function profileName(id) {
   return PROFILES.find((p) => p.id === id)?.name || "Custom";
 }
 
+// Profile weights — MUST mirror core/profiles.py PROFILES exactly. Used to
+// re-rank an existing set-mode result under a different profile on-device,
+// without re-uploading or re-calling Gemini (all six raw axis scores are
+// already in the response). See src/lib/rerank.js.
+export const AXES_DETERMINISTIC = ["sharpness", "exposure"];
+export const AXES_SEMANTIC = [
+  "expression",
+  "composition",
+  "subject_focus",
+  "camera_engagement",
+];
+export const ALL_AXES = [...AXES_DETERMINISTIC, ...AXES_SEMANTIC];
+
+export const PROFILE_WEIGHTS = {
+  family: {
+    expression: 0.25,
+    camera_engagement: 0.2,
+    subject_focus: 0.2,
+    sharpness: 0.19,
+    composition: 0.1,
+    exposure: 0.06,
+  },
+  portrait: {
+    sharpness: 0.27,
+    expression: 0.27,
+    subject_focus: 0.2,
+    exposure: 0.16,
+    composition: 0.1,
+    camera_engagement: 0.0,
+  },
+  event: {
+    composition: 0.28,
+    subject_focus: 0.22,
+    expression: 0.17,
+    sharpness: 0.17,
+    exposure: 0.16,
+    camera_engagement: 0.0,
+  },
+  travel: {
+    composition: 0.35,
+    subject_focus: 0.25,
+    sharpness: 0.2,
+    exposure: 0.15,
+    expression: 0.05,
+    camera_engagement: 0.0,
+  },
+};
+
+// `travel` is the only profile whose Gemini scoring differs (it injects a hint
+// that rewards prominent backgrounds and de-emphasises expression). So
+// re-ranking INTO travel from a non-travel run is directional, not identical —
+// the weights are right but the raw composition/expression were judged without
+// travel's leniency. We surface this caveat in the UI.
+export const PROFILE_HINTED = new Set(["travel"]);
+
 // Human labels for every axis the API can return, across both modes
 // (set mode: 6 axes; burst mode: face-region axes). Unknown keys fall back
 // to a title-cased label so the breakdown never breaks on a new axis.
