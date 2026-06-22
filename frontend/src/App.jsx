@@ -154,7 +154,7 @@ export default function App() {
     );
   }
 
-  return body;
+  return <main>{body}</main>;
 }
 
 function InstallPrompt({ install }) {

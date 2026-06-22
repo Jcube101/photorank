@@ -21,7 +21,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -347,6 +347,16 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
         "skipped_blurry":     0 if blur_gate_bypassed else len(blurry_ids),
         "ranked":             ranked,
     }
+
+
+# ---------------------------------------------------------------------------
+# robots.txt — declared BEFORE the StaticFiles mount so the SPA fallback does
+# not serve index.html for it (which caused Lighthouse SEO errors).
+# ---------------------------------------------------------------------------
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots() -> str:
+    return "User-agent: *\nDisallow:\n"
 
 
 # ---------------------------------------------------------------------------

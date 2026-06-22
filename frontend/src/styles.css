@@ -11,7 +11,7 @@
   --surface-2: #ffffff;
   --ink: #14130f;
   --ink-2: #2a2824;
-  --muted: #8a877f;
+  --muted: #6b6860; /* WCAG AA: ~5.06:1 on --bg #f6f4ef (was #8a877f, 3.26:1) */
   --muted-2: #b8b5ac;
   --line: #e6e2d8;
   --line-2: #efece4;
@@ -36,6 +36,11 @@ body {
   box-sizing: border-box;
 }
 #root {
+  height: 100%;
+}
+
+/* <main> landmark wraps the app; keep it transparent to the height chain. */
+#root > main {
   height: 100%;
 }
 
