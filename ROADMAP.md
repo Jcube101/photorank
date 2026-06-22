@@ -118,7 +118,8 @@ the frontend makes no auth-specific code changes.
 - [x] Notes are displayed prominently — not buried
 - [x] Upload + score + display completes in <90 seconds for 20 photos on a phone
       — confirmed 59s on Samsung via PWA, June 2026 (after concurrent Gemini batches)
-- [ ] Passes Lighthouse PWA audit (installable)
+- [x] Passes Lighthouse PWA audit (installable) — PageSpeed Insights (mobile),
+      June 2026: Performance 92, Accessibility 100, Best Practices 100, SEO 100
 - [x] Works offline with a sensible error state (not just a blank screen)
 
 **Phone testing — confirmed (June 2026):**
@@ -132,8 +133,11 @@ the frontend makes no auth-specific code changes.
 Build verified locally (`npm run build`), breakdown bar math validated against
 SPECS §5.3, and the served bundle/manifest/SW/icons confirmed. The <90s target
 is met — 59s end-to-end for 20 photos on a Samsung via PWA after the Gemini
-batches were made concurrent (see LEARNINGS). One non-blocking validation
-remains: a formal Lighthouse PWA audit.
+batches were made concurrent (see LEARNINGS). Lighthouse (PageSpeed Insights,
+mobile, June 2026) confirmed all targets: **Performance 92, Accessibility 100,
+Best Practices 100, SEO 100** — after the five-fix accessibility/SEO pass
+(robots.txt content-type, text contrast, viewport zoom, `<main>` landmark,
+font preload). All Phase 3 definition-of-done items are complete.
 
 Post-build enhancement: on-device profile switcher (re-rank a set-mode result
 under any profile via pure client-side re-weight — no API call) and
