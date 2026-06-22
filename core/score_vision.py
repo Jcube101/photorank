@@ -29,7 +29,9 @@ import base64
 import json
 import os
 import re
+import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import google.generativeai as genai
@@ -39,6 +41,10 @@ load_dotenv()
 
 GEMINI_MODEL  = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 BATCH_SIZE    = 8
+# Gemini batches are independent and dominated by network wait, so we run them
+# concurrently. Cap parallelism to stay well within rate limits (20 photos →
+# 3 batches max). Override via MAX_CONCURRENCY in .env.
+MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", "4"))
 AXES_SEMANTIC = ["expression", "composition", "subject_focus"]
 
 _SCORE_SCHEMA = """{
@@ -293,18 +299,38 @@ def score_photos(
         system_instruction=system_instruction,
     )
 
-    all_scores: list[dict] = []
     batches = [
         (image_paths[i : i + BATCH_SIZE], resolved_ids[i : i + BATCH_SIZE])
         for i in range(0, len(image_paths), BATCH_SIZE)
     ]
+    n = len(batches)
 
-    for batch_num, (batch_paths, batch_ids) in enumerate(batches, 1):
-        print(f"  [score_vision] batch {batch_num}/{len(batches)} ({len(batch_paths)} photos)...")
-        all_scores.extend(_score_batch(model, batch_paths, batch_ids))
-        if batch_num < len(batches):
-            time.sleep(0.5)
+    def _run(batch_num: int, batch_paths, batch_ids) -> list[dict]:
+        t0 = time.perf_counter()
+        print(f"  [perf] gemini batch {batch_num}/{n} ({len(batch_paths)} photos) START", file=sys.stderr)
+        scores = _score_batch(model, batch_paths, batch_ids)
+        print(f"  [perf] gemini batch {batch_num}/{n} END  {time.perf_counter() - t0:.2f}s", file=sys.stderr)
+        return scores
 
+    if n == 1:
+        return _run(1, *batches[0])
+
+    # Batches are independent and dominated by network wait — run concurrently.
+    # _score_batch keeps its own retry logic; a batch that ultimately fails
+    # raises, and that exception propagates here (no silent default scores).
+    # Results are reassembled in batch order so output is deterministic.
+    results: list[list[dict]] = [None] * n
+    with ThreadPoolExecutor(max_workers=min(n, MAX_CONCURRENCY)) as pool:
+        futures = {
+            pool.submit(_run, i + 1, bp, bi): i
+            for i, (bp, bi) in enumerate(batches)
+        }
+        for fut in as_completed(futures):
+            results[futures[fut]] = fut.result()
+
+    all_scores: list[dict] = []
+    for r in results:
+        all_scores.extend(r)
     return all_scores
 
 

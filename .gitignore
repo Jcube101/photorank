@@ -228,3 +228,10 @@ output/*
 # PhotoRank — temp directories created by ingest.py
 photorank_*/
 venv/
+
+# PhotoRank frontend — the Python `lib/` ignore above also matches the React
+# app's `frontend/src/lib/`, which is real source (breakdown.js, rerank.js) and
+# must be tracked. (frontend/dist and node_modules stay ignored via
+# frontend/.gitignore.)
+!frontend/src/lib/
+!frontend/src/lib/**

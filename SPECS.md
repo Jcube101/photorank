@@ -119,6 +119,13 @@ Reference calibration:
 blur gate. Images where `blur_raw < blur_threshold` are excluded before Gemini
 is called. Default threshold: **100**.
 
+**Blur-gate fallback:** the gate _thins_ a set — it must never refuse to rank.
+If **every** photo is below the threshold (common for a small, uniformly-soft
+burst), the gate is bypassed: all photos are scored and ranked anyway, and the
+response carries `blur_gate_bypassed: true`. A request is only rejected when no
+image could be scored at all (corrupt/unreadable). This applies to both the API
+and the CLI, in both burst and set mode.
+
 ### 3.2 Exposure
 
 ```python
@@ -226,13 +233,14 @@ to the same function used for full-image exposure).
 
 ```json
 {
-  "mode":           "burst",
-  "burst_weights":  {"face_sharpness": 0.50, "sharpness": 0.20, "face_exposure": 0.20, "exposure": 0.10},
-  "blur_threshold": 100.0,
-  "total_photos":   4,
-  "scored_photos":  4,
-  "skipped_blurry": 0,
-  "ranked":         [/* per-photo objects sorted by final_rank */]
+  "mode":               "burst",
+  "burst_weights":      {"face_sharpness": 0.50, "sharpness": 0.20, "face_exposure": 0.20, "exposure": 0.10},
+  "blur_threshold":     100.0,
+  "blur_gate_bypassed": false,
+  "total_photos":       4,
+  "scored_photos":      4,
+  "skipped_blurry":     0,
+  "ranked":             [/* per-photo objects sorted by final_rank */]
 }
 ```
 
@@ -244,6 +252,19 @@ to the same function used for full-image exposure).
 **Model:** `gemini-2.0-flash` (override via `GEMINI_MODEL` env var)
 **Auth:** `GEMINI_API_KEY` environment variable
 **Batch size:** Up to 8 images per request
+
+**Concurrency:** Batches are independent and network-bound, so they are
+dispatched concurrently via a `ThreadPoolExecutor`; total Gemini time is the
+slowest single batch rather than the sum (e.g. 20 photos ≈ 40s instead of
+~125s). Results are reassembled in batch order, so output stays deterministic.
+
+| Env var | Default | Controls |
+|---|---|---|
+| `MAX_CONCURRENCY` | `4` | Maximum concurrent Gemini batch calls. Override by setting `MAX_CONCURRENCY=N` in `.env`. |
+
+At the current 20-photo upload limit a batch set is at most 3 (`ceil(20/8)`),
+so values above 3 have no effect today — the cap matters only if `BATCH_SIZE`
+or the photo limit changes.
 
 ### 4.1 What Gemini Scores
 
@@ -434,13 +455,14 @@ Rounded to 3 decimal places. When two photos have equal `final_score`,
 
 ```json
 {
-  "profile":        "family",
-  "weights":        {"sharpness": 0.15, "...": "..."},
-  "blur_threshold": 100.0,
-  "total_photos":   24,
-  "scored_photos":  21,
-  "skipped_blurry": 3,
-  "ranked":         [/* array of per-photo objects, sorted by final_rank */]
+  "profile":            "family",
+  "weights":            {"sharpness": 0.15, "...": "..."},
+  "blur_threshold":     100.0,
+  "blur_gate_bypassed": false,
+  "total_photos":       24,
+  "scored_photos":      21,
+  "skipped_blurry":     3,
+  "ranked":             [/* array of per-photo objects, sorted by final_rank */]
 }
 ```
 
@@ -478,12 +500,18 @@ before the response is returned, regardless of success or failure.
 
 | Status | Condition |
 |---|---|
-| 422 | Fewer than 2 or more than 20 images; invalid profile or mode; malformed or invalid weights |
+| 422 | Fewer than 2 or more than 20 images; invalid profile or mode; malformed or invalid weights; no image could be scored (all corrupt/unreadable) |
 | 500 | Gemini API key not set; Gemini returned no scoreable results |
 | 502 | Gemini API failure after retries |
 
-All errors return structured JSON: `{"detail": "<message>"}`. Raw stack traces
-are never exposed to the client.
+Every 4xx/5xx on `/rank` logs its status and reason to journald (counts,
+profile, mode, blur numbers only — never image content). All errors return
+structured JSON: `{"detail": "<message>"}`. Raw stack traces are never exposed
+to the client.
+
+**Note:** an all-below-threshold batch is **no longer** a 422 — the blur gate is
+bypassed and every photo is ranked, with `blur_gate_bypassed: true` in the
+response (see Section 3.1).
 
 **Cleanup guarantee:** Two nested `try/finally` blocks guarantee both the upload
 directory and the ingest temp directory are deleted even when scoring fails
@@ -521,8 +549,9 @@ These rules apply in every phase and cannot be relaxed:
 
 | Variable | Required | Notes |
 |---|---|---|
-| `GEMINI_API_KEY` | Yes | Gemini API key |
-| `GEMINI_MODEL`   | No  | Model name (default: `gemini-2.0-flash`) |
+| `GEMINI_API_KEY`  | Yes | Gemini API key |
+| `GEMINI_MODEL`    | No  | Model name (default: `gemini-2.0-flash`) |
+| `MAX_CONCURRENCY` | No  | Max concurrent Gemini batch calls (default: `4`; see §4) |
 
 Loaded via `python-dotenv` from `.env` in the project root. Never hardcoded,
 never committed. `.env` is in `.gitignore`.

@@ -35,15 +35,18 @@ it did. Never show only a final number.
 
 - **Phase 1 (CLI pipeline): Complete. Validated on real photos.**
 - **Phase 2 (FastAPI + Pi deployment): Complete. Validated on real device.**
-- **Phase 3 (React PWA): Built. On-device golden-path validation is the remaining gate.**
+- **Phase 3 (React PWA): Complete. Gate passed on real device; v1 shippable.**
 - Two-mode pipeline: `--mode burst` (deterministic only) and `--mode set` (default, Gemini)
 - Phase 1 gate passed: both modes validated, top pick agreement >80% on real test sets
 - Phase 2 gate passed: end-to-end validated on iPhone via `photorank.job-joseph.com`
+- Phase 3 gate passed: end-to-end flow confirmed on a real phone; a non-technical
+  user completed the full flow unaided
 - `api/main.py`: `POST /rank`, `GET /health`, port **8007**, live at `photorank.job-joseph.com`
 - `frontend/` is a React + Vite PWA: upload → loading → results, with client-side
-  compression, dynamic per-axis breakdowns, manifest + service worker (offline shell)
-- Remaining Phase 3 work: on-device test (iPhone Safari), Lighthouse PWA audit,
-  non-technical user completes the flow unaided
+  compression, dynamic per-axis breakdowns, an on-device profile switcher,
+  sessionStorage result persistence, manifest + service worker (offline shell)
+- Outstanding (non-blocking follow-ups, not gate items): timed 20-photo on-device
+  run (<90s) and a formal Lighthouse PWA audit
 
 ---
 
@@ -93,7 +96,11 @@ For 2–6 near-identical photos from the same moment. Gemini is skipped entirely
 For 7+ photos, or any varied photo set where semantic differences exist.
 
 **Layer 1 — deterministic (score_tech.py):** sharpness, exposure, blur_raw.
-Blur gate excludes images below threshold before Gemini is called.
+Blur gate excludes images below threshold before Gemini is called. **The gate
+only thins a set — if every photo is below threshold it is bypassed and all are
+ranked anyway (`blur_gate_bypassed: true` in the response). A batch is only
+rejected when no image can be scored at all. Applies to both API and CLI, both
+modes.** See LEARNINGS.md.
 
 **Layer 2 — semantic (score_vision.py, Gemini 2.0 Flash):** Only what Gemini
 can reliably judge across varied photos:
@@ -152,7 +159,8 @@ photorank/
     │   ├── api.js                ← rankPhotos() — multipart POST + error mapping
     │   ├── compress.js           ← client-side downscale ~1.5 MP, HEIC→JPEG
     │   ├── usePwaInstall.js       ← Add-to-Home-Screen prompt (after 1st success)
-    │   ├── lib/breakdown.js      ← normalizes API score_breakdown → bar rows
+    │   ├── lib/breakdown.js      ← normalizes API score_breakdown → bar rows (hides 0-weight axes)
+    │   ├── lib/rerank.js         ← client-side profile re-rank (mirrors rank_photos)
     │   ├── screens/              ← UploadScreen, LoadingScreen, ResultsScreen
     │   └── components/           ← HeroCard, RankCard, AxisBar, MessageScreen
     └── _design/                  ← archived Claude Design reference (NOT production)
@@ -162,31 +170,40 @@ photorank/
 
 ## Phase 1 CLI — How to Run
 
+> **Invocation:** run from the repo root with the project venv and `PYTHONPATH=.`
+> set — bare `python core/rank.py` fails because `core/rank.py` does
+> `from core.profiles import ...`, which needs the repo root on `sys.path`.
+> Correct form:
+>
+> ```bash
+> PYTHONPATH=. ./venv/bin/python core/rank.py --profile <profile>
+> ```
+
 ```bash
 # Burst mode — deterministic only, no Gemini (2–6 near-identical shots)
-python core/rank.py --mode burst
+PYTHONPATH=. ./venv/bin/python core/rank.py --mode burst
 
 # Burst mode with explicit input path
-python core/rank.py --mode burst --input /path/to/burst_set
+PYTHONPATH=. ./venv/bin/python core/rank.py --mode burst --input /path/to/burst_set
 
 # Set mode — full pipeline with Gemini (default)
-python core/rank.py --profile family
+PYTHONPATH=. ./venv/bin/python core/rank.py --profile family
 
 # Explicit input path
-python core/rank.py --input /path/to/photos --profile family
+PYTHONPATH=. ./venv/bin/python core/rank.py --input /path/to/photos --profile family
 
 # Custom weights (all six axes required)
-python core/rank.py --profile custom \
+PYTHONPATH=. ./venv/bin/python core/rank.py --profile custom \
   --weights '{"sharpness":0.2,"exposure":0.1,"expression":0.25,"composition":0.2,"subject_focus":0.2,"camera_engagement":0.05}'
 
 # Tighten blur gate
-python core/rank.py --profile portrait --blur-threshold 150
+PYTHONPATH=. ./venv/bin/python core/rank.py --profile portrait --blur-threshold 150
 
 # Save output to output/
-python core/rank.py --profile family --output output/results.json
+PYTHONPATH=. ./venv/bin/python core/rank.py --profile family --output output/results.json
 
 # Deterministic scorer standalone (no Gemini call)
-python core/score_tech.py input/ --threshold 100
+PYTHONPATH=. ./venv/bin/python core/score_tech.py input/ --threshold 100
 ```
 
 ---
@@ -260,7 +277,12 @@ See SPECS.md Section 5 for the complete contract and top-level output wrapper fo
 - **What NOT to ask:** sharpness, exposure, any technical quality assessment
 - **On JSON parse failure:** strip markdown fences, retry once after 1s
 - **On any failure after retries:** raise — do not assign default scores
-- **Rate limit buffer:** 0.5s sleep between batches
+- **Concurrency:** Gemini batches run **concurrently** via a `ThreadPoolExecutor`
+  in `score_vision.py` (batches are independent and network-bound, so total
+  Gemini time is the slowest single batch, not the sum). Results are reassembled
+  in batch order so output is **deterministic**; a single batch skips the pool.
+  Concurrency is capped by `MAX_CONCURRENCY` (default 4; see SPECS §4). This cut
+  a 20-photo run from ~125s to ~40s of Gemini time.
 
 The `notes` field must be one specific, actionable sentence. The Gemini prompt
 enforces this with examples of good vs bad notes.
@@ -287,14 +309,26 @@ near-black `--ink`, olive `--accent`).
    per-photo thumbnails that check off as they compress. Subtitle is
    "Scoring via PhotoRank AI" — **not** "on-device".
 3. **Results** — hero №1 card (real photo, final score, profile, AI note in
-   quotes) + runners-up cards that expand to the full score breakdown.
+   quotes; expands to its own breakdown) + runners-up cards that expand to the
+   full score breakdown. Set-mode results show a **profile switcher** that
+   re-ranks the same photos under any profile on-device.
 
 **Key contracts:**
 - **Breakdown is rendered dynamically from the API's `score_breakdown`** — never
-  hardcoded. Works for both modes (6 set-mode axes incl. zero-weight
-  `camera_engagement`; 4 burst-mode face/full axes). See `src/lib/breakdown.js`.
+  hardcoded. Works for both modes (set-mode axes; 4 burst-mode face/full axes).
+  **Axes with `effective_weight === 0` are hidden** (e.g. `camera_engagement`
+  outside `family`) — a 0% row confuses; the filter is dynamic so axes appear/
+  disappear as the profile switcher changes weights. See `src/lib/breakdown.js`.
 - **Bar width = contribution** (weight × raw), with the explicit math on each
   row and a dashed cap at the axis max. Gemini axes use the accent colour.
+- **On-device profile switcher** (`src/lib/rerank.js`, results screen, set mode
+  only): re-ranks the existing result under any profile by pure client-side
+  re-weight — no re-upload, no Gemini call. Mirrors `core/rank.py:rank_photos`
+  exactly (weighted sum, round-to-3, `(final_score desc, relative_rank)` tie-
+  break). `family`/`portrait`/`event` are identical to a real run; `travel`
+  is directional only (its Gemini hint isn't reflected in pre-scored raws) and
+  shows an "approximate" note. `PROFILE_WEIGHTS` in `src/config.js` mirrors
+  `core/profiles.py` — keep them in sync. Hidden for burst-mode results.
 - **Mode is omitted from the request** so the server auto-detects (EXIF).
 - **Client-side compression** (`src/compress.js`) downscales to ~1.5 MP and
   re-encodes JPEG; this both shrinks the upload and yields a browser-renderable
@@ -304,7 +338,15 @@ near-black `--ink`, olive `--accent`).
 - **Errors are mapped to friendly copy** in `src/api.js` (422/500/502 →
   user-facing messages); raw server detail is never shown.
 - **Privacy on the client:** previews are object URLs, revoked on reset. No
-  history, no accounts, no persistence.
+  history, no accounts, no durable persistence.
+- **Session continuity:** the last result JSON is saved to **`sessionStorage`**
+  (`photorank_last_result`) on success, restored on load, cleared on "New batch".
+  `sessionStorage` (not `localStorage`) clears when the tab closes, so it bridges
+  an Android process kill within a live session without becoming durable history.
+  Only scores/notes/photo_ids are stored, never pixels. `score_breakdown` (incl.
+  raw axis scores) is preserved so the profile switcher still works after a
+  restore; `blob:` previews can't survive the kill, so a restored screen falls
+  back to gradient placeholders and disables "Save winner".
 - **PWA:** `public/manifest.webmanifest` + `public/sw.js` (offline app shell;
   **never caches `/rank`**). Add-to-Home-Screen prompt fires after the first
   successful ranking (`src/usePwaInstall.js`).

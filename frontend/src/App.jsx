@@ -10,6 +10,28 @@ import ResultsScreen from "./screens/ResultsScreen.jsx";
 import MessageScreen from "./components/MessageScreen.jsx";
 import { usePwaInstall } from "./usePwaInstall.js";
 
+// Session continuity: Android can kill the PWA process during a tab switch,
+// which would otherwise drop the user back to the upload screen. We stash the
+// last results JSON in sessionStorage (cleared when the tab closes) so the
+// results screen survives a process restart. Only scores/notes/photo_ids are
+// stored — never pixel data. Image previews are blob: URLs that cannot survive
+// the kill, so a restored screen falls back to gradient placeholders.
+const RESULT_KEY = "photorank_last_result";
+
+function loadStoredResult() {
+  try {
+    const raw = sessionStorage.getItem(RESULT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.ranked) && parsed.ranked.length > 0) {
+      return parsed;
+    }
+  } catch {
+    // Corrupt/unavailable storage — fall through to a normal upload start.
+  }
+  return null;
+}
+
 function useOnline() {
   const [online, setOnline] = useState(navigator.onLine);
   useEffect(() => {
@@ -26,10 +48,12 @@ function useOnline() {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState("upload"); // upload | loading | results | error
+  // Restore a prior session's results if the process was killed and relaunched.
+  const [restored] = useState(loadStoredResult);
+  const [screen, setScreen] = useState(restored ? "results" : "upload"); // upload | loading | results | error
   const [profile, setProfile] = useState("family");
   const [files, setFiles] = useState([]);
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState(restored);
   const [previews, setPreviews] = useState(null); // Map<photo_id, objectURL>
   const [error, setError] = useState(null);
 
@@ -48,6 +72,11 @@ export default function App() {
     setFiles([]);
     setError(null);
     setScreen("upload");
+    try {
+      sessionStorage.removeItem(RESULT_KEY);
+    } catch {
+      // ignore — storage may be unavailable
+    }
   }, [previews, revokePreviews]);
 
   const handleStart = useCallback((chosen) => {
@@ -62,6 +91,11 @@ export default function App() {
       setPreviews(previewMap);
       setScreen("results");
       install.armAfterSuccess();
+      try {
+        sessionStorage.setItem(RESULT_KEY, JSON.stringify(res));
+      } catch {
+        // Storage full/unavailable — non-fatal, just lose session continuity.
+      }
     },
     [install],
   );
@@ -120,7 +154,7 @@ export default function App() {
     );
   }
 
-  return body;
+  return <main>{body}</main>;
 }
 
 function InstallPrompt({ install }) {

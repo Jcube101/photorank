@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shutil
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +21,9 @@ from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 load_dotenv()
 
@@ -41,6 +44,16 @@ _EXIF_DATETIME_ORIGINAL = 36867
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("photorank.api")
+
+
+def _reject(status: int, detail: str) -> HTTPException:
+    """
+    Build an HTTPException while logging the reason so the cause of every 4xx/5xx
+    on /rank lands in journald. Detail strings carry only counts, profile names,
+    and mode/blur messages — never image content — so this is privacy-safe.
+    """
+    logger.warning("/rank rejected: %d — %s", status, detail)
+    return HTTPException(status, detail=detail)
 
 app = FastAPI(title="PhotoRank API", version="1.0")
 
@@ -124,30 +137,36 @@ async def rank_endpoint(
     weights: Optional[str] = Form(None),
 ) -> JSONResponse:
     # --- Input validation ---
+    _t_req = time.perf_counter()
+    logger.info(
+        "/rank received: files=%d profile=%s mode=%s",
+        len(files), profile, mode if mode is not None else "auto",
+    )
+
     if not 2 <= len(files) <= 20:
-        raise HTTPException(422, detail=f"Expected 2–20 images, got {len(files)}.")
+        raise _reject(422, f"Expected 2–20 images, got {len(files)}.")
 
     if profile not in _VALID_PROFILES:
-        raise HTTPException(
+        raise _reject(
             422,
-            detail=f"Unknown profile '{profile}'. Valid: {sorted(_VALID_PROFILES)}",
+            f"Unknown profile '{profile}'. Valid: {sorted(_VALID_PROFILES)}",
         )
 
     if mode is not None and mode not in ("burst", "set"):
-        raise HTTPException(422, detail="mode must be 'burst' or 'set'.")
+        raise _reject(422, "mode must be 'burst' or 'set'.")
 
     custom_weights: Optional[dict] = None
     if profile == "custom":
         if not weights:
-            raise HTTPException(422, detail="weights required when profile is 'custom'.")
+            raise _reject(422, "weights required when profile is 'custom'.")
         try:
             custom_weights = json.loads(weights)
         except json.JSONDecodeError as exc:
-            raise HTTPException(422, detail=f"Invalid weights JSON: {exc}")
+            raise _reject(422, f"Invalid weights JSON: {exc}")
         try:
             validate_weights(custom_weights)
         except ValueError as exc:
-            raise HTTPException(422, detail=str(exc))
+            raise _reject(422, str(exc))
 
     # --- Save uploads to isolated temp dir ---
     upload_dir = Path(f"/tmp/photorank_{uuid.uuid4().hex}")
@@ -178,12 +197,15 @@ async def rank_endpoint(
 
         # --- Mode resolution (reads raw EXIF before ingest strips it) ---
         resolved_mode = mode if mode is not None else _auto_detect_mode(upload_paths)
+        logger.info("/rank resolved mode=%s for %d file(s)", resolved_mode, len(upload_paths))
 
         # --- Ingest: cv2.imread + cv2.imwrite strips EXIF automatically ---
+        _t_ingest = time.perf_counter()
         try:
             photos, ingest_temp_dir = ingest(upload_paths)
         except ValueError as exc:
-            raise HTTPException(422, detail=str(exc))
+            raise _reject(422, str(exc))
+        logger.info("[perf] ingest: %.2fs (%d photos)", time.perf_counter() - _t_ingest, len(photos))
 
         try:
             # Replace uuid-based photo_ids with original display names
@@ -212,6 +234,7 @@ async def rank_endpoint(
     finally:
         shutil.rmtree(upload_dir, ignore_errors=True)
 
+    logger.info("[perf] /rank TOTAL: %.2fs", time.perf_counter() - _t_req)
     return JSONResponse(content=output)
 
 
@@ -228,27 +251,40 @@ def _run_burst(photos: list[dict]) -> dict:
         except ValueError as exc:
             logger.warning("burst scoring skipped a photo: %s", exc)
 
+    if not all_scores:
+        raise _reject(422, "No images could be scored.")
+
     sharp      = [s for s in all_scores if s["blur_raw"] >= _BLUR_THRESHOLD]
     blurry_ids = [s["photo_id"] for s in all_scores if s["blur_raw"] < _BLUR_THRESHOLD]
 
-    if not sharp:
-        raise HTTPException(422, detail="All images are below the blur threshold.")
+    # The blur gate THINS a set (drop soft frames when sharp ones exist); it must
+    # not refuse to rank. If nothing clears the threshold — common for a small,
+    # uniformly-soft burst — still rank everything and surface the least-blurry.
+    blur_gate_bypassed = not sharp
+    if blur_gate_bypassed:
+        logger.warning(
+            "burst: all %d image(s) below blur threshold (%.1f); ranking all anyway",
+            len(all_scores), _BLUR_THRESHOLD,
+        )
+        sharp = all_scores
 
     ranked = _rank_burst(sharp)
     for item in ranked:
         item.pop("path", None)
     return {
-        "mode":           "burst",
-        "burst_weights":  BURST_WEIGHTS,
-        "blur_threshold": _BLUR_THRESHOLD,
-        "total_photos":   len(photos),
-        "scored_photos":  len(sharp),
-        "skipped_blurry": len(blurry_ids),
-        "ranked":         ranked,
+        "mode":               "burst",
+        "burst_weights":      BURST_WEIGHTS,
+        "blur_threshold":     _BLUR_THRESHOLD,
+        "blur_gate_bypassed": blur_gate_bypassed,
+        "total_photos":       len(photos),
+        "scored_photos":      len(sharp),
+        "skipped_blurry":     0 if blur_gate_bypassed else len(blurry_ids),
+        "ranked":             ranked,
     }
 
 
 def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
+    _t = time.perf_counter()
     all_technical: list[dict] = []
     for photo in photos:
         try:
@@ -256,13 +292,25 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
             all_technical.append(tech)
         except ValueError as exc:
             logger.warning("technical scoring skipped a photo: %s", exc)
+    logger.info("[perf] tech scoring: %.2fs", time.perf_counter() - _t)
+
+    if not all_technical:
+        raise _reject(422, "No images could be scored.")
 
     sharp_technical = [t for t in all_technical if t["blur_raw"] >= _BLUR_THRESHOLD]
     blurry_ids      = [t["photo_id"] for t in all_technical if t["blur_raw"] < _BLUR_THRESHOLD]
 
-    if not sharp_technical:
-        raise HTTPException(422, detail="All images are below the blur threshold.")
+    # Gate thins the set before Gemini; it must not refuse the whole batch. If
+    # nothing clears the threshold, score everything rather than rejecting.
+    blur_gate_bypassed = not sharp_technical
+    if blur_gate_bypassed:
+        logger.warning(
+            "set: all %d image(s) below blur threshold (%.1f); scoring all anyway",
+            len(all_technical), _BLUR_THRESHOLD,
+        )
+        sharp_technical = all_technical
 
+    _t = time.perf_counter()
     try:
         gemini_scores = score_photos(
             [t["path"] for t in sharp_technical],
@@ -270,9 +318,10 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
             profile=profile,
         )
     except EnvironmentError as exc:
-        raise HTTPException(500, detail=str(exc))
+        raise _reject(500, str(exc))
     except RuntimeError as exc:
-        raise HTTPException(502, detail=str(exc))
+        raise _reject(502, str(exc))
+    logger.info("[perf] gemini total: %.2fs (%d photos)", time.perf_counter() - _t, len(sharp_technical))
 
     gemini_by_id = {s["photo_id"]: s for s in gemini_scores}
     merged: list[dict] = []
@@ -284,19 +333,58 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
         merged.append(_merge(tech, gemini_by_id[pid]))
 
     if not merged:
-        raise HTTPException(500, detail="Gemini returned no scoreable results.")
+        raise _reject(500, "Gemini returned no scoreable results.")
 
     ranked = rank_photos(merged, weights)
     return {
-        "mode":           "set",
-        "profile":        profile,
-        "weights":        weights,
-        "blur_threshold": _BLUR_THRESHOLD,
-        "total_photos":   len(photos),
-        "scored_photos":  len(merged),
-        "skipped_blurry": len(blurry_ids),
-        "ranked":         ranked,
+        "mode":               "set",
+        "profile":            profile,
+        "weights":            weights,
+        "blur_threshold":     _BLUR_THRESHOLD,
+        "blur_gate_bypassed": blur_gate_bypassed,
+        "total_photos":       len(photos),
+        "scored_photos":      len(merged),
+        "skipped_blurry":     0 if blur_gate_bypassed else len(blurry_ids),
+        "ranked":             ranked,
     }
+
+
+# ---------------------------------------------------------------------------
+# robots.txt — declared BEFORE the StaticFiles mount so the SPA fallback does
+# not serve index.html for it (which caused Lighthouse SEO errors).
+# ---------------------------------------------------------------------------
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots() -> str:
+    return "User-agent: *\nDisallow:\n"
+
+
+# ---------------------------------------------------------------------------
+# Static frontend (mounted LAST so /rank and /health take priority)
+# ---------------------------------------------------------------------------
+
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+
+class _SpaStaticFiles(StaticFiles):
+    """
+    Serve the built React PWA, falling back to index.html for any unmatched
+    path so client-side routing (React Router) works on deep links / refresh.
+    """
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return FileResponse(self.directory / "index.html")
+            raise
+
+
+if _FRONTEND_DIST.is_dir():
+    app.mount("/", _SpaStaticFiles(directory=_FRONTEND_DIST, html=True), name="frontend")
+else:
+    logger.warning("frontend build not found at %s — static serving disabled", _FRONTEND_DIST)
 
 
 # ---------------------------------------------------------------------------
