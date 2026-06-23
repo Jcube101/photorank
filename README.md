@@ -177,24 +177,26 @@ See [frontend/README.md](frontend/README.md) for details.
 Photos are never stored. The only external service used is Gemini 2.0 Flash
 (set mode only), which receives compressed images for semantic scoring and
 nothing else. Burst mode is entirely local. No accounts, no cloud storage,
-no telemetry.
+no telemetry. The hosted instance at `photorank.job-joseph.com` is gated by
+Cloudflare Access (email OTP) at the edge, so only authorised emails reach it.
 
 ## Status
 
 **Phase 1 (CLI pipeline) is complete and validated on real photos.**
 **Phase 2 (FastAPI + Pi deployment) is complete.** API is live at
 `https://photorank.job-joseph.com`. Validated end-to-end on a real iPhone.
-**Phase 3 (React PWA) is built** — upload, profile selection, animated
-pipeline progress, hero result, and expandable per-axis score breakdowns,
-with client-side compression and offline app shell. On-device golden-path
-validation is the remaining gate.
+**Phase 3 (React PWA) is complete** — upload, profile selection, animated
+pipeline progress, hero result, expandable per-axis score breakdowns, on-device
+profile switching, client-side compression, and offline app shell. Gate passed
+on a real phone; Lighthouse (mobile) 92 / 100 / 100 / 100 (Performance /
+Accessibility / Best Practices / SEO).
+**Phase 4 (authentication) is complete.** The live domain is gated by Cloudflare
+Access (email OTP, 24-hour session) at the edge — no application code.
 
 ## What's Coming
 
-- **Phase 3 gate** — end-to-end test on a real phone; a non-technical person
-  completes the full flow unaided; Lighthouse PWA (installable) audit.
-- **Beyond** — see the Future section in [ROADMAP.md](ROADMAP.md): full-day
-  bulk cull (moment grouping), native wrappers, custom preference model.
+See the Future section in [ROADMAP.md](ROADMAP.md): full-day bulk cull (moment
+grouping), native wrappers, and a custom preference model.
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.
 

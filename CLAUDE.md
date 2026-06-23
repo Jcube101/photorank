@@ -36,6 +36,7 @@ it did. Never show only a final number.
 - **Phase 1 (CLI pipeline): Complete. Validated on real photos.**
 - **Phase 2 (FastAPI + Pi deployment): Complete. Validated on real device.**
 - **Phase 3 (React PWA): Complete. Gate passed on real device; v1 shippable.**
+- **Phase 4 (Cloudflare Access auth): Complete (2026-06-24). Edge-only, no code changes.**
 - Two-mode pipeline: `--mode burst` (deterministic only) and `--mode set` (default, Gemini)
 - Phase 1 gate passed: both modes validated, top pick agreement >80% on real test sets
 - Phase 2 gate passed: end-to-end validated on iPhone via `photorank.job-joseph.com`
@@ -57,7 +58,7 @@ it did. Never show only a final number.
 | Frontend | React PWA | No App Store friction. Mobile-first. |
 | Backend | FastAPI on Raspberry Pi, port 8007 | Cheap, private, already owned hardware |
 | Tunnel | Cloudflare Tunnel → `photorank.job-joseph.com` | Exposes Pi to internet without opening firewall ports |
-| Auth | Cloudflare Access | JWT-based, free for personal use, zero backend code needed |
+| Auth | Cloudflare Access (live) | Email OTP, 24h session. Protects the whole domain incl. `/rank` at the edge — zero backend code. Configured via `dev-meta/cf_access_setup.py` |
 | Technical scoring | OpenCV (Haar cascade) | Local, free, deterministic, fast on Pi — MediaPipe removed (no ARM64 wheels) |
 | Semantic scoring | Gemini 2.0 Flash | Near-free, reliable JSON output, strong at semantic tasks |
 | Ranking | Python weighted scoring | Simple, auditable, swappable profiles |
