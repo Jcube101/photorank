@@ -150,6 +150,33 @@ gate blockers.
 
 ---
 
+## Phase 4 — Authentication (Cloudflare Access) ✓ COMPLETE
+
+**Goal:** Gate `photorank.job-joseph.com` behind authentication without touching
+app code.
+
+**In scope:**
+- [x] Cloudflare Access policy: email one-time-PIN (OTP), 24-hour session
+- [x] Protects the entire domain — frontend **and** API, including `/rank` — at
+      the Cloudflare edge; no backend code changes
+- [x] Configured via `~/projects/dev-meta/cf_access_setup.py`
+
+**Out of scope:**
+- Application-level auth (accounts, passwords, tokens in app code)
+- Per-user roles / authorization — a single allowed-email policy is enough for v1
+
+**Definition of done:**
+- [x] Unauthenticated requests are 302-redirected to the Access login page
+      (verified on `/`, `/rank`, `/health` — 2026-06-24)
+- [x] Email OTP grants a 24-hour session across the whole domain incl. `/rank`
+- [x] No code changes required — protection is entirely at the Cloudflare edge
+
+**Phase 4 gate:** ✓ Passed — 2026-06-24. Access enforced at the edge. Same-domain
+serving (frontend + API on one hostname) means no CORS preflight issue with
+`/rank` (see LEARNINGS).
+
+---
+
 ## Future — Not Scoped
 
 These are being tracked but have no timeline or design yet. They do not

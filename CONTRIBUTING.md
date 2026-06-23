@@ -4,8 +4,10 @@
 
 **Phase 1 (CLI pipeline) is complete.** **Phase 2 (FastAPI + Pi deployment) is
 complete** — API is live at `https://photorank.job-joseph.com`. **Phase 3 (React
-PWA) is built** (`frontend/`); the remaining gate is on-device validation. It is
-open for contributions — open an issue to discuss before starting work.
+PWA) is complete** (`frontend/`) — gate passed on a real phone, Lighthouse
+(mobile) 92/100/100/100. **Phase 4 (Cloudflare Access auth) is complete** — the
+live domain is gated by email OTP at the edge, no app code. The project is open
+for contributions — open an issue to discuss before starting work.
 
 ---
 

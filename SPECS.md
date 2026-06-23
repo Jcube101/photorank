@@ -472,7 +472,8 @@ Rounded to 3 decimal places. When two photos have equal `final_score`,
 
 **Local port:** `8007`
 **Production base URL:** `https://photorank.job-joseph.com` (Cloudflare Tunnel)
-**Auth:** Cloudflare Access (JWT on every request, handled by the tunnel — Phase 5)
+**Auth:** Cloudflare Access — live; email OTP, 24h session, enforced at the edge
+across the whole domain incl. `/rank` (no app code; see ROADMAP Phase 4)
 
 ### 6.1 POST /rank
 

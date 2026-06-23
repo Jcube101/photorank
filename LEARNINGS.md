@@ -205,4 +205,10 @@ are equal.
 
 ---
 
+**Discovery:** For a same-domain FastAPI setup (frontend and API served from the *same* hostname), Cloudflare Access can protect the entire domain — including API endpoints like `/rank` — with no application code changes.
+**Impact:** PhotoRank serves the PWA and the API from `photorank.job-joseph.com`, so requests are same-origin: there are no CORS preflights, and Access at the edge can gate everything (24h email-OTP session) without breaking the API. The well-known caveat — that Access blocks API calls because a CORS `OPTIONS` preflight doesn't carry the Access session cookie/JWT and gets bounced to the login page — only applies when the frontend and API live on *different* subdomains. Configured via `~/projects/dev-meta/cf_access_setup.py`.
+**Date:** 2026-06-24
+
+---
+
 *Add new entries above this line as discoveries are made.*
