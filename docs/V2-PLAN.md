@@ -1,6 +1,6 @@
 # PhotoRank v2 — "Full shoot" Mode (Archetype 2)
 
-**Status:** Draft design, not yet approved. No code is written for it yet.
+**Status:** Approved for Phase A, 2026-10-03.
 **Author context:** Builds on CLAUDE.md, SPECS.md, ROADMAP.md, LEARNINGS.md as of 2026-10-03.
 **Reference shoot:** Wat Arun, 180 JPGs, about 10 MB each, Sony A7 III, 85mm f/1.4, one subject.
 
@@ -650,6 +650,8 @@ ROADMAP pattern.
 
 **Goal:** prove the grouping and per-set picks on Wat Arun, from the terminal, before any UI work.
 
+Prerequisite: the Gemini model swap to `gemini-3.8-flash` (thinking level "low") ships separately, before Phase A starts (Q20).
+
 In scope:
 - `core/group.py`: EXIF time (PIL; `SubsecTimeOriginal`), dHash, HSV histogram, the §7.3 decision table, post-pass, and boundary reasons.
 - `core/profiles.py`: `SHOOT_WEIGHTS` plus validation for the 8-axis set.
@@ -704,8 +706,8 @@ In scope:
 ### 12.1 Answer key format
 
 `eval/<shoot>/answer_key.json`. It contains filenames only, no image data.
-Photos stay in git-ignored `input/` (Q16 on whether the key itself is
-committed).
+Photos stay in git-ignored `input/`. The key itself is committed under
+`eval/` (Q16, decided).
 
 ```json
 {
@@ -723,7 +725,7 @@ Rules for whoever labels it:
 - Sets must cover every photo, contiguously, with no overlaps. The harness validates this.
 - Exactly **one** pick per set: the frame you would post.
 - Optional `"acceptable": ["DSC01008"]` for near-ties, reported as a separate lenient metric only.
-- Write down **what makes a new set** before labelling (Q17). For example: same location and pose idea = same set, even if framing changes.
+- **What makes a new set** (Q17, decided): a new set is any photo the owner might post alongside the others as its own photo. The same spot with a framing change (e.g. full-length to headshot) counts as a **new** set.
 
 ### 12.2 Boundary metrics
 
@@ -787,7 +789,7 @@ that range.
 
 - Face detection rate on Wat Arun (`face_detected` false share) and top-1 restricted to face-detected sets.
 - **Resolution ablation:** `face_blur_raw` ranking at 1.5 MP vs 3 MP vs full resolution face crops. Does 1.5 MP downscaling hide the f/1.4 focus misses we rely on? This decides Q18.
-- Gemini latency per call vs group size (5, 10, 15, 20 images).
+- Gemini latency per call vs group size (5, 10, 15, 20 images), **re-measured on `gemini-3.8-flash` (thinking level "low")**. The §9.9 estimates came from 2.0 Flash and must not be reused.
 - Full-image `blur_raw` distribution on good frames, to confirm turning the v1 blur gate off was right.
 
 ### 12.5 Phone-path parity
@@ -834,25 +836,26 @@ offline eval cache, but the cache contains only numbers and filenames.
 ## 14. Open questions
 
 These are deliberately not decided here. Each one names the default this doc
-assumed so work isn't blocked.
+assumed so work isn't blocked. Owner review on 2026-10-03 marked each item
+**DECIDED**, **DEFAULT ACCEPTED** (the assumed answer stands), or left it open.
 
-1. **Privacy rule change on the Pi.** The async job model needs per-job state across requests: scores in memory until fetched or expired (30 min idle), and photos on disk from chunk receipt until their group is scored. Is this acceptable as an amendment to SPECS §7.3 ("no caching, nothing persists between requests")? *Assumed: yes, with per-group deletion, TTL reaper, and startup sweep.*
-2. **Max photos per shoot.** *Assumed 300.* Is there a real upper bound (e.g. a 600-photo wedding)?
-3. **Time budget.** What end-to-end wall-clock time is acceptable for 180 photos? *Assumed ≤ 8 min*, since v1's < 90s target doesn't scale.
+1. **Privacy rule change on the Pi.** The async job model needs per-job state across requests: scores in memory until fetched or expired (30 min idle), and photos on disk from chunk receipt until their group is scored. Is this acceptable as an amendment to SPECS §7.3 ("no caching, nothing persists between requests")? *Assumed: yes, with per-group deletion, TTL reaper, and startup sweep.* **DECIDED (2026-10-03):** Yes. Per-job state is approved as an amendment to SPECS §7.3, with per-group deletion, TTL reaper, and startup sweep as described.
+2. **DEFAULT ACCEPTED.** **Max photos per shoot.** *Assumed 300.* Is there a real upper bound (e.g. a 600-photo wedding)?
+3. **DEFAULT ACCEPTED.** **Time budget.** What end-to-end wall-clock time is acceptable for 180 photos? *Assumed ≤ 8 min*, since v1's < 90s target doesn't scale.
 4. **Picker limits on the target phone.** Does the Android photo picker allow 180 selected at once through `<input type=file multiple>`? Some devices cap a single selection (often around 100). *Assumed: additive selection covers it.* Needs a device test.
-5. **Profiles in full shoot mode.** Should the user's profile (family/portrait/…) apply, for example blended as `face_sharpness w + (1−w) × profile`? Or is one fixed `SHOOT_WEIGHTS` set enough? *Assumed: fixed SHOOT_WEIGHTS for A–B.*
-6. **Forced score spread in the Gemini prompt.** Keep or drop it for within-set scoring? *Decided by the §12.3 ablation.*
-7. **IndexedDB retention.** Is 24h auto-purge the right TTL? Should a session be cleared automatically after the user exports the shortlist?
-8. **Stars and export.** Should winners be starred by default, or nothing starred until the user acts? Is the shortlist output a filename list (to find originals), shared compressed copies, or shared originals? *Assumed: nothing starred by default, plus a "Star all winners" button. Copy filenames always, share where possible.*
-9. **EXIF parser.** Use `exifr` lite (a new dependency, about 10 KB) or a hand-written JPEG APP1 reader (no dependency, JPEG-only)? *Leaning towards `exifr`.*
-10. **uvicorn workers.** Does the Pi's systemd unit run a single worker? In-memory job state needs one. Must verify before Phase B.
-11. **tmpfs for job files on the Pi.** Mount the job root on `tmpfs` so a power cut leaves nothing on disk? It depends on Pi RAM. 70 MB peak is small.
-12. **Partial-job semantics.** Is "failed groups shown with retry, other groups delivered" acceptable under the v1 rule "partial results are not acceptable"? *Assumed: yes. Atomicity is per group (one Gemini batch).*
-13. **Override and star after edits.** When a set with an override or star is split or merged, should they follow the photo (assumed) or reset?
-14. **Session-expiry warning.** Is it worth adding `GET /session` (reading the `Cf-Access-Jwt-Assertion` `exp` claim for display only) so the app can warn before a long upload? *Assumed: Phase C, only if expiries happen mid-shoot.*
-15. **Service worker host check.** Confirm whether the offline shell actually works in production (§10.7). If not, fix it separately from v2.
-16. **Committing the answer key.** It contains only filenames and set ranges. Commit it under `eval/`, or keep it git-ignored next to the photos?
-17. **What counts as a set?** For example, does a change from full-length to headshot at the same spot start a new set? This decides both labelling and how sensitive the threshold for "strong change" (`H_HIGH`/`C_HIGH`) should be. Needs the owner's definition before labelling.
-18. **Upload resolution for full shoot.** If the §12.4 ablation shows 1.5 MP hides focus misses, options are about 3 MP uploads (roughly 2× bytes) or a phone-side face crop (no reliable browser face detector, so this is hard). *Assumed: 1.5 MP until data says otherwise.*
-19. **Sony sub-second timestamps.** Does the A7 III write `SubSecTimeOriginal`? Does the transfer path (Imaging Edge / card reader / cloud) keep `DateTimeOriginal` intact? Imaging Edge can also be set to transfer 2 MP copies. *Assumed: full-size originals with DateTimeOriginal kept. Check on the reference files.*
-20. **Gemini model lifetime.** Full shoot mode makes about 20 calls per shoot with up to 20 images each. Confirm `gemini-2.0-flash` limits (images per request, RPM) and availability for this usage.
+5. **DEFAULT ACCEPTED.** **Profiles in full shoot mode.** Should the user's profile (family/portrait/…) apply, for example blended as `face_sharpness w + (1−w) × profile`? Or is one fixed `SHOOT_WEIGHTS` set enough? *Assumed: fixed SHOOT_WEIGHTS for A–B.*
+6. **DEFAULT ACCEPTED.** **Forced score spread in the Gemini prompt.** Keep or drop it for within-set scoring? *Decided by the §12.3 ablation.*
+7. **DEFAULT ACCEPTED.** **IndexedDB retention.** Is 24h auto-purge the right TTL? Should a session be cleared automatically after the user exports the shortlist?
+8. **DEFAULT ACCEPTED.** **Stars and export.** Should winners be starred by default, or nothing starred until the user acts? Is the shortlist output a filename list (to find originals), shared compressed copies, or shared originals? *Assumed: nothing starred by default, plus a "Star all winners" button. Copy filenames always, share where possible.*
+9. **DEFAULT ACCEPTED.** **EXIF parser.** Use `exifr` lite (a new dependency, about 10 KB) or a hand-written JPEG APP1 reader (no dependency, JPEG-only)? *Leaning towards `exifr`.*
+10. **DEFAULT ACCEPTED.** **uvicorn workers.** Does the Pi's systemd unit run a single worker? In-memory job state needs one. Must verify before Phase B.
+11. **tmpfs for job files on the Pi.** Mount the job root on `tmpfs` so a power cut leaves nothing on disk? It depends on Pi RAM. 70 MB peak is small. **DECIDED (2026-10-03):** Check whether `/tmp` is already tmpfs on the Pi (`findmnt /tmp`) before adding a mount.
+12. **DEFAULT ACCEPTED.** **Partial-job semantics.** Is "failed groups shown with retry, other groups delivered" acceptable under the v1 rule "partial results are not acceptable"? *Assumed: yes. Atomicity is per group (one Gemini batch).*
+13. **DEFAULT ACCEPTED.** **Override and star after edits.** When a set with an override or star is split or merged, should they follow the photo (assumed) or reset?
+14. **DEFAULT ACCEPTED.** **Session-expiry warning.** Is it worth adding `GET /session` (reading the `Cf-Access-Jwt-Assertion` `exp` claim for display only) so the app can warn before a long upload? *Assumed: Phase C, only if expiries happen mid-shoot.*
+15. **DEFAULT ACCEPTED.** **Service worker host check.** Confirm whether the offline shell actually works in production (§10.7). If not, fix it separately from v2.
+16. **Committing the answer key.** It contains only filenames and set ranges. Commit it under `eval/`, or keep it git-ignored next to the photos? **DECIDED (2026-10-03):** Commit the answer key under `eval/`. Filenames only.
+17. **What counts as a set?** For example, does a change from full-length to headshot at the same spot start a new set? This decides both labelling and how sensitive the threshold for "strong change" (`H_HIGH`/`C_HIGH`) should be. Needs the owner's definition before labelling. **DECIDED (2026-10-03):** A new set is any photo the owner might post alongside the others as its own photo. The same spot with a framing change (e.g. full-length to headshot) counts as a NEW set. Added to the §12.1 labelling rules.
+18. **DEFAULT ACCEPTED.** **Upload resolution for full shoot.** If the §12.4 ablation shows 1.5 MP hides focus misses, options are about 3 MP uploads (roughly 2× bytes) or a phone-side face crop (no reliable browser face detector, so this is hard). *Assumed: 1.5 MP until data says otherwise.*
+19. **Sony sub-second timestamps.** Does the A7 III write `SubSecTimeOriginal`? Does the transfer path (Imaging Edge / card reader / cloud) keep `DateTimeOriginal` intact? Imaging Edge can also be set to transfer 2 MP copies. *Assumed: full-size originals with DateTimeOriginal kept. Check on the reference files.* **DECIDED (2026-10-03):** Partially answered. Reference files on the phone are full-size originals (4000×6000, about 10.4 MB) with capture time intact. `SubSecTimeOriginal` is still unverified.
+20. **Gemini model.** Full shoot mode makes about 20 calls per shoot with up to 20 images each. The model is `gemini-3.8-flash` with thinking level "low". The model swap ships separately, before Phase A. Confirm its limits (images per request, RPM) for this usage, and re-measure latency per group on 3.8 Flash in the §12.4 diagnostics.
