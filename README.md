@@ -51,7 +51,7 @@ For 7+ photos, or any set where semantic differences exist between shots.
 - Sharpness via combined Laplacian variance and Tenengrad gradient energy
 - Exposure via histogram analysis (brightness, contrast, clipping)
 
-**Layer 2 — semantic (Gemini 2.0 Flash)**
+**Layer 2 — semantic (Gemini 3.8 Flash)**
 - Expression scored per-subject — weighted toward the weaker expression so a
   blink or flat look on one person can't be masked by a strong expression on
   the other
@@ -77,7 +77,7 @@ per-axis score breakdown so you can verify the ranking, not just accept it.
 
 - Python 3.11+
 - A Gemini API key (free tier covers typical use — set mode only)
-- `opencv-python-headless`, `google-generativeai`, `python-dotenv`
+- `opencv-python-headless`, `google-genai`, `python-dotenv`
 - Phase 2 (API server): `fastapi`, `uvicorn[standard]`, `python-multipart`, `Pillow`
 
 ```bash
@@ -174,7 +174,7 @@ See [frontend/README.md](frontend/README.md) for details.
 
 ## Privacy
 
-Photos are never stored. The only external service used is Gemini 2.0 Flash
+Photos are never stored. The only external service used is Gemini 3.8 Flash
 (set mode only), which receives compressed images for semantic scoring and
 nothing else. Burst mode is entirely local. No accounts, no cloud storage,
 no telemetry. The hosted instance at `photorank.job-joseph.com` is gated by
