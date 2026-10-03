@@ -25,7 +25,6 @@ Usage:
   scores = score_photos(paths, photo_ids=ids, profile="family")
 """
 
-import base64
 import json
 import os
 import re
@@ -34,12 +33,23 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import google.generativeai as genai
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
-GEMINI_MODEL  = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL  = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+# Gemini 3 models think by default, which adds latency. Scoring is a
+# structured rating task, so pin thinking low. Set to an empty value to omit
+# the thinking config (needed for models without thinking levels, e.g. 2.x).
+GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "low").strip()
+_THINKING_LEVELS = {"minimal", "low", "medium", "high"}
+if GEMINI_THINKING_LEVEL and GEMINI_THINKING_LEVEL.lower() not in _THINKING_LEVELS:
+    raise ValueError(
+        f"GEMINI_THINKING_LEVEL={GEMINI_THINKING_LEVEL!r} is invalid. "
+        f"Use one of {sorted(_THINKING_LEVELS)}, or leave it empty to omit."
+    )
 BATCH_SIZE    = 8
 # Gemini batches are independent and dominated by network wait, so we run them
 # concurrently. Cap parallelism to stay well within rate limits (20 photos →
@@ -156,15 +166,14 @@ def _load_api_key() -> str:
     return key
 
 
-def _encode_image(path: str | Path) -> tuple[str, str]:
+def _image_part(path: str | Path) -> types.Part:
     p    = Path(path)
     mime = {
         ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".png": "image/png",  ".webp": "image/webp",
         ".heic": "image/heic",
     }.get(p.suffix.lower(), "image/jpeg")
-    with open(p, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8"), mime
+    return types.Part.from_bytes(data=p.read_bytes(), mime_type=mime)
 
 
 def _build_batch_prompt(
@@ -179,8 +188,7 @@ def _build_batch_prompt(
     parts = []
     for i, (path, photo_id) in enumerate(zip(image_paths, photo_ids)):
         parts.append(f"Photo {i + 1} — photo_id: {photo_id}")
-        data, mime = _encode_image(path)
-        parts.append({"inline_data": {"mime_type": mime, "data": data}})
+        parts.append(_image_part(path))
     parts.append("\nScore all photos above. Return a JSON array with one object per photo.")
     return parts
 
@@ -232,8 +240,22 @@ def _parse_scores(raw: str, expected_count: int) -> list[dict]:
     return parsed
 
 
+def _generation_config(system_instruction: str) -> types.GenerateContentConfig:
+    thinking = (
+        types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL)
+        if GEMINI_THINKING_LEVEL else None
+    )
+    return types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        thinking_config=thinking,
+        # No tools are passed; disabling AFC skips its loop and log warning.
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+    )
+
+
 def _score_batch(
-    model: genai.GenerativeModel,
+    client: genai.Client,
+    config: types.GenerateContentConfig,
     image_paths: list[str | Path],
     photo_ids: list[str],
     retries: int = 2,
@@ -244,9 +266,12 @@ def _score_batch(
 
     for attempt in range(retries + 1):
         try:
-            response      = model.generate_content(parts)
-            last_response = response.text
-            return _parse_scores(response.text, len(image_paths))
+            response      = client.models.generate_content(
+                model=GEMINI_MODEL, contents=parts, config=config,
+            )
+            # .text excludes thought parts; None when no text came back.
+            last_response = response.text or ""
+            return _parse_scores(last_response, len(image_paths))
         except (ValueError, json.JSONDecodeError) as e:
             last_error = e
             if attempt < retries:
@@ -289,15 +314,12 @@ def score_photos(
 
     resolved_ids = photo_ids if photo_ids is not None else [Path(p).name for p in image_paths]
 
-    genai.configure(api_key=_load_api_key())
+    client = genai.Client(api_key=_load_api_key())
     profile_hint = _PROFILE_HINTS.get(profile, "")
     system_instruction = _SYSTEM_PROMPT + f"\n\nScoring profile context: {profile}"
     if profile_hint:
         system_instruction += f"\n\n{profile_hint}"
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=system_instruction,
-    )
+    config = _generation_config(system_instruction)
 
     batches = [
         (image_paths[i : i + BATCH_SIZE], resolved_ids[i : i + BATCH_SIZE])
@@ -308,7 +330,7 @@ def score_photos(
     def _run(batch_num: int, batch_paths, batch_ids) -> list[dict]:
         t0 = time.perf_counter()
         print(f"  [perf] gemini batch {batch_num}/{n} ({len(batch_paths)} photos) START", file=sys.stderr)
-        scores = _score_batch(model, batch_paths, batch_ids)
+        scores = _score_batch(client, config, batch_paths, batch_ids)
         print(f"  [perf] gemini batch {batch_num}/{n} END  {time.perf_counter() - t0:.2f}s", file=sys.stderr)
         return scores
 

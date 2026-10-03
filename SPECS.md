@@ -249,7 +249,9 @@ to the same function used for full-image exposure).
 ## 4. Gemini Semantic Scoring Layer
 
 **Module:** `core/score_vision.py`
-**Model:** `gemini-2.0-flash` (override via `GEMINI_MODEL` env var)
+**Model:** `gemini-3.8-flash` (override via `GEMINI_MODEL` env var)
+**SDK:** `google-genai` (`client.models.generate_content`)
+**Thinking:** `ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL)`, default `low`
 **Auth:** `GEMINI_API_KEY` environment variable
 **Batch size:** Up to 8 images per request
 
@@ -261,6 +263,7 @@ slowest single batch rather than the sum (e.g. 20 photos ≈ 40s instead of
 | Env var | Default | Controls |
 |---|---|---|
 | `MAX_CONCURRENCY` | `4` | Maximum concurrent Gemini batch calls. Override by setting `MAX_CONCURRENCY=N` in `.env`. |
+| `GEMINI_THINKING_LEVEL` | `low` | Thinking level for every scoring call: `minimal`, `low`, `medium` or `high`. Any other non-empty value raises `ValueError` on import. Empty omits the thinking config (needed for 2.x models). |
 
 At the current 20-photo upload limit a batch set is at most 3 (`ceil(20/8)`),
 so values above 3 have no effect today — the cap matters only if `BATCH_SIZE`
@@ -551,7 +554,8 @@ These rules apply in every phase and cannot be relaxed:
 | Variable | Required | Notes |
 |---|---|---|
 | `GEMINI_API_KEY`  | Yes | Gemini API key |
-| `GEMINI_MODEL`    | No  | Model name (default: `gemini-2.0-flash`) |
+| `GEMINI_MODEL`    | No  | Model name (default: `gemini-3.8-flash`) |
+| `GEMINI_THINKING_LEVEL` | No | Thinking level for scoring calls (default: `low`; see §4) |
 | `MAX_CONCURRENCY` | No  | Max concurrent Gemini batch calls (default: `4`; see §4) |
 
 Loaded via `python-dotenv` from `.env` in the project root. Never hardcoded,

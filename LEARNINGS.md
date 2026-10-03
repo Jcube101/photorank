@@ -211,4 +211,10 @@ are equal.
 
 ---
 
+**Discovery:** Gemini 3 models think by default, and thinking adds latency to every call. Scoring is a structured rating task against a fixed rubric, so extended reasoning costs time without a clear gain. The old `google-generativeai` SDK (0.8.x) also has no thinking config at all, so it could not turn this down.
+**Impact:** Moved to `gemini-3.8-flash` and migrated `score_vision.py` to the `google-genai` SDK. Every scoring call pins thinking to `low` via `GEMINI_THINKING_LEVEL` (default `low`). Prompts, weights and the JSON response schema are unchanged. `response.text` excludes thought parts, so parsing is unaffected. The latency figures above came from 2.0 Flash; re-measure on the Pi (target: 20 photos under 60s server time).
+**Date:** 2026-10-03
+
+---
+
 *Add new entries above this line as discoveries are made.*

@@ -60,7 +60,7 @@ it did. Never show only a final number.
 | Tunnel | Cloudflare Tunnel → `photorank.job-joseph.com` | Exposes Pi to internet without opening firewall ports |
 | Auth | Cloudflare Access (live) | Email OTP, 24h session. Protects the whole domain incl. `/rank` at the edge — zero backend code. Configured via `dev-meta/cf_access_setup.py` |
 | Technical scoring | OpenCV (Haar cascade) | Local, free, deterministic, fast on Pi — MediaPipe removed (no ARM64 wheels) |
-| Semantic scoring | Gemini 2.0 Flash | Near-free, reliable JSON output, strong at semantic tasks |
+| Semantic scoring | Gemini 3.8 Flash (thinking `low`) | Near-free, reliable JSON output, strong at semantic tasks |
 | Ranking | Python weighted scoring | Simple, auditable, swappable profiles |
 | Storage | None (ephemeral) | Privacy requirement — photos deleted immediately post-scoring |
 | Secrets | `.env` + python-dotenv | Standard, never committed |
@@ -103,7 +103,7 @@ ranked anyway (`blur_gate_bypassed: true` in the response). A batch is only
 rejected when no image can be scored at all. Applies to both API and CLI, both
 modes.** See LEARNINGS.md.
 
-**Layer 2 — semantic (score_vision.py, Gemini 2.0 Flash):** Only what Gemini
+**Layer 2 — semantic (score_vision.py, Gemini 3.8 Flash):** Only what Gemini
 can reliably judge across varied photos:
 - `expression`: Per-subject emotional quality, weighted toward weaker subject.
 - `camera_engagement`: Direct eye contact strictness (≤6 if anyone looks away).
@@ -271,7 +271,13 @@ See SPECS.md Section 5 for the complete contract and top-level output wrapper fo
 
 ## Gemini Integration
 
-- **Model:** `gemini-2.0-flash` (override via `GEMINI_MODEL` in `.env`)
+- **Model:** `gemini-3.8-flash` (override via `GEMINI_MODEL` in `.env`)
+- **SDK:** `google-genai` (`from google import genai`). The old
+  `google-generativeai` SDK was dropped: it has no thinking config.
+- **Thinking:** pinned via `GEMINI_THINKING_LEVEL` (default `low`; one of
+  `minimal`/`low`/`medium`/`high`). Gemini 3 thinks by default, which adds
+  latency. An invalid value raises on import. Set it empty to omit the
+  thinking config, which a 2.x model needs if you roll `GEMINI_MODEL` back.
 - **Auth:** `GEMINI_API_KEY` in `.env`
 - **Batch size:** Up to 8 images per request
 - **What to ask for:** `subject_1_expression`, `subject_2_expression`, `camera_engagement`, `composition`, `subject_focus`, `relative_rank`, `notes` (Python computes `expression` from per-subject values)
