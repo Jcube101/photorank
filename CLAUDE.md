@@ -48,6 +48,12 @@ it did. Never show only a final number.
   sessionStorage result persistence, manifest + service worker (offline shell)
 - Outstanding (non-blocking follow-ups, not gate items): timed 20-photo on-device
   run (<90s) and a formal Lighthouse PWA audit
+- **v2 "Full shoot" Phase A (CLI + evaluation): built, gate NOT yet passed.**
+  `--mode shoot` groups an ordered shoot into sets and picks a winner per set.
+  The gate needs the Wat Arun photos and a hand-labelled answer key; thresholds
+  and `SHOOT_WEIGHTS` are still the plan's initial guesses. No API or frontend
+  work yet (Phase B). Design: `docs/V2-PLAN.md`; review and open decisions:
+  `docs/V2-REVIEW.md`. Archetype 2 is now in scope for the CLI only.
 
 ---
 
@@ -115,6 +121,28 @@ can reliably judge across varied photos:
 **Gemini must never be asked about sharpness or exposure** — it produces
 meaningless noise on near-identical shots for technical axes.
 
+### Shoot Mode (`--mode shoot`, v2 Phase A, CLI only)
+
+For one long, ordered shoot (100–300 photos). Two steps:
+
+1. **Group** (`core/group.py`): one boundary decision per adjacent pair from
+   capture-time gap (`dt`), dHash distance (`dh`) and HSV-histogram distance
+   (`dc`), using the V2-PLAN §7.3 decision table, then a post-pass (merge
+   groups below `MIN_GROUP`, split above `MAX_GROUP`). Every boundary records
+   its reason. Thresholds live in `core/group.py:THRESHOLDS`, versioned by
+   `GROUPING_VERSION`. `tests/fixtures/grouping_golden.json` is the contract
+   the Phase B JS port must also reproduce; regenerate it with
+   `tests/fixtures/make_grouping_golden.py` and bump the version on any change.
+2. **Score each group** (`core/shoot.py`): burst-mode face signals **and** one
+   Gemini call for the whole group (`batch_size=len(group)`, shoot prompt
+   addendum), ranked with `SHOOT_WEIGHTS` (8 axes). **No blur gate.** A group
+   is atomic: scored or `failed`, never default scores; one failed group does
+   not stop the others.
+
+The set-mode Gemini prompt is unchanged and pinned by a hash test. The
+forced-spread rule can be switched off in shoot mode only (`--no-force-spread`),
+for the Q6 evaluation.
+
 ---
 
 ## Folder Structure
@@ -137,7 +165,14 @@ photorank/
 │   ├── score_burst.py      ← burst mode: face-region sharpness + exposure
 │   ├── score_vision.py     ← Gemini semantic scorer (set mode only)
 │   ├── rank.py             ← mode-aware pipeline, profile weights, CLI entry point
+│   ├── group.py            ← shoot mode: boundary detection (time + dHash + histogram)
+│   ├── shoot.py            ← shoot mode: per-group scoring and ranking
 │   └── profiles.py         ← single source of truth for all profiles and weights
+├── scripts/
+│   └── eval_shoot.py       ← shoot-mode evaluation against an answer key
+├── eval/                   ← committed answer keys (filenames only); see eval/README.md
+├── tests/                  ← pytest suite + fixtures/grouping_golden.json
+├── docs/                   ← V2-PLAN.md (design), V2-REVIEW.md (review)
 ├── input/                  ← drop test photos here; contents git-ignored
 ├── output/                 ← ranked results written here; contents git-ignored
 ├── api/
@@ -205,6 +240,19 @@ PYTHONPATH=. ./venv/bin/python core/rank.py --profile family --output output/res
 
 # Deterministic scorer standalone (no Gemini call)
 PYTHONPATH=. ./venv/bin/python core/score_tech.py input/ --threshold 100
+
+# Shoot mode — group an ordered shoot into sets, one winner per set
+PYTHONPATH=. ./venv/bin/python core/rank.py --mode shoot --input /path/to/shoot \
+  --output output/shoot.json
+
+# Evaluate shoot mode against an answer key (format: eval/README.md).
+# --stage grouping makes no Gemini calls; scores are cached in output/.
+PYTHONPATH=. ./venv/bin/python scripts/eval_shoot.py \
+  --input input/wat_arun --key eval/wat_arun/answer_key.json --stage all
+
+# Tests and lint (dev tools: pip install -r requirements-dev.txt)
+PYTHONPATH=. ./venv/bin/pytest -q
+./venv/bin/ruff check core/group.py core/shoot.py scripts tests
 ```
 
 ---
@@ -407,6 +455,15 @@ These cannot be relaxed for any reason:
 - `core/profiles.py:PROFILES` — single source of truth for all profile weight dicts
 - `core/profiles.py:BURST_WEIGHTS` — burst mode axis weights (face_sharpness, sharpness, face_exposure, exposure)
 - `core/profiles.py:validate_weights()` — called on load, raises if weights don't sum to 1.0
+- `core/profiles.py:SHOOT_WEIGHTS` / `validate_shoot_weights()` — shoot mode's 8-axis weights; validated at import
+- `core/group.py:group_photos()` — features → groups with boundary reasons (shoot mode)
+- `core/group.py:decide_pair()` — the §7.3 decision table for one adjacent pair
+- `core/group.py:group_measured()` — table + post-pass on precomputed distances (used by the threshold sweep)
+- `core/shoot.py:score_group()` — raw scores for one group: face signals + one Gemini call, no weights
+- `core/shoot.py:rank_group()` — apply shoot weights to raw scores (re-rankable without Gemini)
+- `core/shoot.py:run_shoot()` — group and score a whole shoot; per-group failure isolation
+- `core/score_vision.py:build_system_instruction()` — assembles the prompt; `prompt_mode="shoot"` and `force_spread`
+- `scripts/eval_shoot.py` — answer-key evaluation harness with a score cache
 - `api/main.py:rank_endpoint()` — FastAPI POST /rank handler; saves uploads, auto-detects mode, calls ingest → score → rank, cleans up
 - `api/main.py:_auto_detect_mode()` — reads EXIF DateTimeOriginal from raw uploads; returns 'burst' if ≤6 files within 10s, else 'set'
 - `api/main.py:_run_burst()` — burst scoring sub-routine (called after EXIF stripping by ingest)

@@ -261,8 +261,9 @@ down.
 **Recommendation (applied).** Merge first, then split. Distance is
 `dh + 64·dc` in both passes; a pair with no fingerprint counts as 0. A split
 only considers cut points that leave at least `MIN_GROUP` photos on each side,
-and breaks ties toward the middle of the group. A singleton is kept when both
-sides have a valid `dt ≥ T_HARD`, or when it has no neighbour to merge into.
+and breaks ties toward the middle of the group. A singleton is kept when every
+side that has a neighbour is a valid `dt ≥ T_HARD` gap, so a first or last
+frame needs only one such gap.
 
 ### G3 — should-fix — Rule 4 conflicts with the Q17 definition of a set
 
@@ -382,6 +383,12 @@ stores the raw values, so this needs no new Gemini calls.
 group, which the post-pass allows (isolated frames). Phase A turns spread off
 for a group of one, whatever the switch says. Two-photo groups keep the
 switch's setting; note that spread then forces one of the two below 5.
+
+### Note — the §8.1 worked example does not add up
+
+The contributions listed in §8.1 sum to 7.869, not the `final_score` of 7.958
+shown. The weights and formula are right; only the example total is wrong.
+`tests/test_shoot_scoring.py` uses 7.869.
 
 ---
 
