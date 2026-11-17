@@ -419,6 +419,15 @@ def _boundary_info(pair: dict) -> dict:
     }
 
 
+def measure_pairs(ordered: list[dict]) -> list[dict]:
+    """Distances for each adjacent pair of already-ordered photos."""
+    measured = []
+    for a, b in pairwise(ordered):
+        dt, dh, dc = pair_distances(a, b)
+        measured.append({"a": a["photo_id"], "b": b["photo_id"], "dt": dt, "dh": dh, "dc": dc})
+    return measured
+
+
 def group_photos(features: list[dict], thresholds: dict | None = None) -> dict:
     """
     Group a shoot into contiguous sets.
@@ -434,16 +443,36 @@ def group_photos(features: list[dict], thresholds: dict | None = None) -> dict:
                fixture: distances, the table's decision, and whether the
                post-pass changed it.
     """
-    th = resolve_thresholds(thresholds)
     ordered, order = order_photos(features)
+    return group_measured(
+        [f["photo_id"] for f in ordered], measure_pairs(ordered), thresholds, order
+    )
+
+
+def group_measured(
+    photo_ids: list[str],
+    measured: list[dict],
+    thresholds: dict | None = None,
+    order: str = "capture_time",
+) -> dict:
+    """
+    Group photos whose pair distances are already known.
+
+    This is the decision table plus post-pass with no feature work, so a
+    threshold sweep can re-group one shoot thousands of times cheaply.
+
+    Args:
+        photo_ids: photos in shooting order.
+        measured:  measure_pairs() output, one record per adjacent pair.
+                   Not modified.
+    """
+    th = resolve_thresholds(thresholds)
 
     pairs: list[dict] = []
-    for a, b in pairwise(ordered):
-        dt, dh, dc = pair_distances(a, b)
-        boundary, reason, rule = decide_pair(dt, dh, dc, th)
+    for m in measured:
+        boundary, reason, rule = decide_pair(m["dt"], m["dh"], m["dc"], th)
         pairs.append({
-            "a": a["photo_id"], "b": b["photo_id"],
-            "dt": dt, "dh": dh, "dc": dc,
+            "a": m["a"], "b": m["b"], "dt": m["dt"], "dh": m["dh"], "dc": m["dc"],
             "boundary": boundary, "reason": reason, "rule": rule,
         })
 
@@ -461,13 +490,13 @@ def group_photos(features: list[dict], thresholds: dict | None = None) -> dict:
             pair["final_reason"] = pair["reason"]
         pair["merged"] = pair.pop("merged", False) and not is_boundary
 
-    runs   = _runs(boundaries) if ordered else []
+    runs   = _runs(boundaries) if photo_ids else []
     width  = max(2, len(str(len(runs))))
     groups = []
     for n, (start, end) in enumerate(runs, 1):
         groups.append({
             "group_id":        f"g{n:0{width}d}",
-            "photo_ids":       [f["photo_id"] for f in ordered[start:end]],
+            "photo_ids":       photo_ids[start:end],
             "source":          "auto",
             "boundary_before": {"reason": "start"} if start == 0
                                else _boundary_info(pairs[start - 1]),
