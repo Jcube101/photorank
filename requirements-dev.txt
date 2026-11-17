@@ -1,0 +1,6 @@
+# Development-only tools. Not needed on the Pi to run the service.
+#   ./venv/bin/pip install -r requirements-dev.txt
+#   PYTHONPATH=. ./venv/bin/pytest -q
+#   ./venv/bin/ruff check core/group.py core/shoot.py scripts tests
+pytest==9.2.0
+ruff==0.17.5

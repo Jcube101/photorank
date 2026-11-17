@@ -25,9 +25,19 @@ Two scoring modes:
     5. output       — ranked JSON labelled as burst mode
     6. cleanup      — delete temp directory
 
+  shoot mode (--mode shoot)
+    Full shoot pipeline for one long, ordered shoot (see core/shoot.py).
+    1. ingest       — collect, validate, compress
+    2. group        — capture time + fingerprints -> contiguous sets
+    3. score        — per set: face-region scores + ONE Gemini call
+    4. rank         — apply SHOOT_WEIGHTS, one winner per set (no blur gate)
+    5. output       — grouping plus per-set rankings
+    6. cleanup      — delete temp directory
+
 Usage:
   python core/rank.py --profile family
   python core/rank.py --mode burst --input /path/to/burst_set
+  python core/rank.py --mode shoot --input /path/to/shoot
   python core/rank.py --input /path/to/photos --profile portrait --blur-threshold 80
   python core/rank.py --profile custom \\
       --weights '{"sharpness":0.2,"exposure":0.1,"expression":0.25,"composition":0.2,"subject_focus":0.25,"camera_engagement":0.05}'
@@ -181,11 +191,13 @@ def main() -> None:
     parser.add_argument(
         "--mode", "-m",
         default="set",
-        choices=["burst", "set"],
+        choices=["burst", "set", "shoot"],
         help=(
             "Scoring mode. 'burst': deterministic only with face-region signals, "
             "no Gemini (fast, no API cost, for 2–6 near-identical shots). "
-            "'set': full two-layer pipeline with Gemini semantic scoring (default)."
+            "'set': full two-layer pipeline with Gemini semantic scoring (default). "
+            "'shoot': split one ordered shoot into sets and pick the best of each "
+            "(face-region signals plus one Gemini call per set)."
         ),
     )
     parser.add_argument(
@@ -218,6 +230,11 @@ def main() -> None:
         "--no-blur-filter",
         action="store_true",
         help="Process all images regardless of sharpness",
+    )
+    parser.add_argument(
+        "--no-force-spread",
+        action="store_true",
+        help="Shoot mode only: drop the forced score-spread rule from the Gemini prompt",
     )
     parser.add_argument(
         "--output", "-o",
@@ -322,6 +339,16 @@ def main() -> None:
             }
 
         # ------------------------------------------------------------------
+        # SHOOT MODE — group into sets, score each set, one winner per set
+        # ------------------------------------------------------------------
+        elif args.mode == "shoot":
+            from core.shoot import print_summary, run_shoot
+
+            output_data = run_shoot(photos, force_spread=not args.no_force_spread)
+            print(f"[perf] PIPELINE TOTAL: {time.perf_counter() - _perf_t0:.2f}s", file=sys.stderr)
+            print_summary(output_data)
+
+        # ------------------------------------------------------------------
         # SET MODE — full two-layer pipeline with Gemini
         # ------------------------------------------------------------------
         else:
@@ -418,6 +445,11 @@ def main() -> None:
             print(f"[rank] results written to {args.output}", file=sys.stderr)
         else:
             print(output_json)
+
+        # A failed set has no pick. The output above still lists it, but the
+        # run must not look like a clean success.
+        if output_data.get("groups_failed"):
+            sys.exit(2)
 
     finally:
         cleanup(temp_dir)
