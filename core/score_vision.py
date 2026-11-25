@@ -68,13 +68,19 @@ _SCORE_SCHEMA = """{
   "notes": "<one specific sentence — the single most important thing about this photo>"
 }"""
 
-_SYSTEM_PROMPT = """\
+_PROMPT_HEAD = """\
 You are a professional photo editor scoring photos for a mobile ranking tool.
 
 Score ONLY semantic and aesthetic attributes. Do NOT assess technical sharpness
 or exposure — those are measured separately by computer vision tools and are
 not your concern here.
 
+"""
+
+# The forced-spread block. Set mode always uses it (see LEARNINGS: Gemini
+# clusters at 5-7 without it). Shoot mode can switch it off for evaluation,
+# because inside one tight set it may invent differences (V2-PLAN Q6).
+_SPREAD_BLOCK = """\
 CRITICAL: You are ranking these photos AGAINST EACH OTHER, not against an
 abstract standard. Your scores MUST spread across the full 1–10 range:
   - At least one photo must score 8 or higher on each axis
@@ -84,6 +90,19 @@ abstract standard. Your scores MUST spread across the full 1–10 range:
   - Think of the best photo in the set as your 8–10 anchor, and score the
     rest relative to it
 
+"""
+
+_NO_SPREAD_BLOCK = """\
+You are ranking these photos AGAINST EACH OTHER, not against an abstract
+standard. Use the best photo in the set as your anchor and score the rest
+relative to it:
+  - Where photos genuinely differ on an axis, let the scores show it clearly
+  - Where photos are equivalent on an axis, give them the same score
+  - Do NOT invent differences that are not visible in the photos
+
+"""
+
+_PROMPT_BODY = """\
 Score each photo using the following fields, 1–10:
 
   subject_1_expression  Score the primary subject's expression independently.
@@ -146,6 +165,17 @@ strength or flaw. Be specific and actionable:
 Return ONLY a valid JSON array, one object per photo, no markdown fences,
 no commentary, no trailing text. Schema:
 """ + _SCORE_SCHEMA
+
+_SYSTEM_PROMPT = _PROMPT_HEAD + _SPREAD_BLOCK + _PROMPT_BODY
+
+_SHOOT_ADDENDUM = (
+    "These photos are consecutive frames of a single set from one portrait "
+    "shoot: the same subject, location and outfit. Rank them against each other. "
+    "Focus on the differences that matter between frames of one set: expression, "
+    "eyes, pose, hands, gaze, and framing."
+)
+
+PROMPT_MODES = ("default", "shoot")
 
 
 _PROFILE_HINTS: dict[str, str] = {
@@ -284,10 +314,41 @@ def _score_batch(
     )
 
 
+def build_system_instruction(
+    profile: str = "family",
+    prompt_mode: str = "default",
+    force_spread: bool = True,
+) -> str:
+    """
+    Assemble the system prompt.
+
+    "default" is the set-mode prompt, unchanged: forced spread plus the profile
+    context and any profile hint. "shoot" swaps the profile context for the
+    shoot addendum and lets the caller drop the forced-spread rule.
+    """
+    if prompt_mode not in PROMPT_MODES:
+        raise ValueError(f"prompt_mode must be one of {PROMPT_MODES}, got {prompt_mode!r}")
+
+    if prompt_mode == "shoot":
+        spread = _SPREAD_BLOCK if force_spread else _NO_SPREAD_BLOCK
+        return _PROMPT_HEAD + spread + _PROMPT_BODY + f"\n\n{_SHOOT_ADDENDUM}"
+
+    if not force_spread:
+        raise ValueError("force_spread=False is only supported with prompt_mode='shoot'")
+    system_instruction = _SYSTEM_PROMPT + f"\n\nScoring profile context: {profile}"
+    profile_hint = _PROFILE_HINTS.get(profile, "")
+    if profile_hint:
+        system_instruction += f"\n\n{profile_hint}"
+    return system_instruction
+
+
 def score_photos(
     image_paths: list[str | Path],
     photo_ids: list[str] | None = None,
     profile: str = "family",
+    batch_size: int | None = None,
+    prompt_mode: str = "default",
+    force_spread: bool = True,
 ) -> list[dict]:
     """
     Score images via Gemini for semantic attributes only.
@@ -299,6 +360,12 @@ def score_photos(
                      the returned IDs match the originals, not the compressed names.
                      Defaults to the filename portion of each image_path.
         profile:     Scoring profile name passed as context in the prompt.
+        batch_size:  Images per Gemini request. Defaults to BATCH_SIZE (8).
+                     Shoot mode passes the group size so one set is one call.
+        prompt_mode: "default" (set mode) or "shoot" (adds the shoot addendum
+                     in place of the profile context).
+        force_spread: Keep the forced score-spread rule. Only shoot mode may
+                     turn it off; set mode always forces spread.
 
     Returns:
         List of dicts: photo_id, subject_1_expression, subject_2_expression,
@@ -314,16 +381,17 @@ def score_photos(
 
     resolved_ids = photo_ids if photo_ids is not None else [Path(p).name for p in image_paths]
 
+    size = BATCH_SIZE if batch_size is None else batch_size
+    if size < 1:
+        raise ValueError(f"batch_size must be at least 1, got {size}")
+    system_instruction = build_system_instruction(profile, prompt_mode, force_spread)
+
     client = genai.Client(api_key=_load_api_key())
-    profile_hint = _PROFILE_HINTS.get(profile, "")
-    system_instruction = _SYSTEM_PROMPT + f"\n\nScoring profile context: {profile}"
-    if profile_hint:
-        system_instruction += f"\n\n{profile_hint}"
     config = _generation_config(system_instruction)
 
     batches = [
-        (image_paths[i : i + BATCH_SIZE], resolved_ids[i : i + BATCH_SIZE])
-        for i in range(0, len(image_paths), BATCH_SIZE)
+        (image_paths[i : i + size], resolved_ids[i : i + size])
+        for i in range(0, len(image_paths), size)
     ]
     n = len(batches)
 
