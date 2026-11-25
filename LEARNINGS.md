@@ -217,4 +217,10 @@ are equal.
 
 ---
 
+**Discovery:** The Sony A7 III writes no sub-second capture time. None of the 187 Wat Arun JPGs has `SubSecTimeOriginal`, `SubSecTime` or `SubSecTimeDigitized`. They do all have `DateTimeOriginal` and `OffsetTimeOriginal`. This answers V2-PLAN Q19. On this shoot, 29 of 186 adjacent pairs are ≤ 1 s apart, and one pair shares a timestamp.
+**Impact:** Every photo is `time_source: "exif"` at 1 s resolution. Ordering inside one second falls back to the filename tiebreak in `order_photos`, which matches DSC order here. `dt` is a whole number of seconds, which is fine for the 20 s / 90 s thresholds. The grouping-only pass also showed (before any labels) that time does all the work on this shoot. Every proposed boundary has `dt ≥ 20 s`, and every pair ≥ 40 s apart is one. Rule 4 never fires: `dc` tops out at 0.30 for quick pairs, below `C_HIGH` 0.35, so with `FAST_RULE=and` a quick reframe can never split (V2-REVIEW G3). Eleven quick pairs have `dh ≥ 24`. The answer key will show whether they are real reframes.
+**Date:** 2026-11-25
+
+---
+
 *Add new entries above this line as discoveries are made.*
