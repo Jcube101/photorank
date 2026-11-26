@@ -10,6 +10,7 @@ marked where it applies):
 - **Q6:** forced spread is **off** in shoot mode. See §6.2 and §14.
 - **V2-REVIEW J9:** score **one set per synchronous request**, not through the jobs API. See the note at the top of §9.
 - **Results UI:** each set shows its **top 3** for the user to choose from, not one winner. See §10.3.
+- **Phase A gate passed**, with the shoot-mode defaults set from the evaluation: `T_SOFT` 15 s, `H_LOW` 10, `C_LOW` 0.15 (`GROUPING_VERSION` 2); `SHOOT_WEIGHTS` face_sharpness 0.1, expression / subject_focus / composition 0.3 each; forced spread off. See §11.
 
 ---
 
@@ -183,25 +184,31 @@ This is the same `_SYSTEM_PROMPT` contract with a short shoot-mode addendum. It 
 
 **DECIDED (2026-11-26):** forced spread is **off** in shoot mode. With the combined
 weights, spread off scored top-1 46% (44–48%) and top-3 81% against 42% and 81%
-with it on. The code default (`--no-force-spread`, `force_spread=True`) is not
-flipped yet; that ships with the tuned thresholds and weights.
+with it on. Shipped the same day: shoot mode defaults to spread off, and
+`--force-spread` adds it back. Set mode always forces spread.
 
 ### 6.3 Shoot weights
 
 The new axis set is the six set-mode axes plus `face_sharpness`:
 
-| Axis | Weight (initial) | Source | Rationale |
-|---|---|---|---|
-| `face_sharpness` | **0.30** | deterministic (face crop) | Missed focus at f/1.4 is the most common and most objective reject. |
-| `expression` | **0.30** | gemini | Main human differentiator between frames of one set. |
-| `subject_focus` | 0.10 | gemini | Pose/prominence varies a little within a set. |
-| `composition` | 0.10 | gemini | Framing varies a little within a set. |
-| `camera_engagement` | 0.10 | gemini | Gaze matters for a portrait set. Lower than `family` because looking away is sometimes the intended look. |
-| `exposure` | 0.05 | deterministic | Nearly constant within a set. Kept for transparency. |
-| `sharpness` | 0.05 | deterministic | Misleading at shallow depth of field (bokeh pulls it down). Kept low on purpose. |
-| `face_exposure` | 0.00 | deterministic (face crop) | Returned and hidden by the existing zero-weight filter. Candidate for tuning. |
+| Axis | Weight (initial) | **Chosen 2026-11-26** | Source | Rationale |
+|---|---|---|---|---|
+| `face_sharpness` | **0.30** | **0.10** | deterministic (face crop) | Missed focus at f/1.4 is the most common and most objective reject. |
+| `expression` | **0.30** | **0.30** | gemini | Main human differentiator between frames of one set. |
+| `subject_focus` | 0.10 | **0.30** | gemini | Pose/prominence varies a little within a set. |
+| `composition` | 0.10 | **0.30** | gemini | Framing varies a little within a set. |
+| `camera_engagement` | 0.10 | 0.00 | gemini | Gaze matters for a portrait set. Lower than `family` because looking away is sometimes the intended look. |
+| `exposure` | 0.05 | 0.00 | deterministic | Nearly constant within a set. Kept for transparency. |
+| `sharpness` | 0.05 | 0.00 | deterministic | Misleading at shallow depth of field (bokeh pulls it down). Kept low on purpose. |
+| `face_exposure` | 0.00 | 0.00 | deterministic (face crop) | Returned and hidden by the existing zero-weight filter. Candidate for tuning. |
 
-These are **starting values** to be tuned against the answer key (§12.3).
+The initial column held **starting values** to be tuned against the answer key
+(§12.3). The chosen column is the default since 2026-11-26. On Wat Arun every
+sensible round weight set scored within Gemini's run-to-run range of the others.
+This one is simple (four axes), keeps a small face-sharpness guard for shoots
+where focus does miss, and scored within a point of the initial weights (top-1 44%
+for both, top-3 79% against 80%; §11 Phase A).
+Zero-weight axes are still scored and returned; the UI hides them.
 They live in `core/profiles.py:SHOOT_WEIGHTS`, validated to sum to 1.0, and are
 mirrored in `frontend/src/config.js` for on-device re-ranking (the same pattern
 as `PROFILE_WEIGHTS`). In Phase A–B full shoot mode does **not** use the v1
@@ -271,20 +278,25 @@ change on both signals.
 - `MIN_GROUP`: a group of 1 is merged into whichever neighbour has the smaller combined distance, **unless** `dt ≥ T_HARD` on both sides. A truly isolated frame stays a one-photo group.
 - `MAX_GROUP`: a group larger than this is split at its largest internal `dh + 64·dc`, repeating until every piece fits. The split is labelled `reason: "max_size"` so the user can see it was forced.
 
-**Tunable thresholds (initial guesses, to be calibrated in Phase A):**
+**Tunable thresholds (initial guesses, calibrated in Phase A):**
 
-| Name | Default | Meaning |
-|---|---|---|
-| `T_SOFT` | 20 s | Below this, frames are presumed same-set (photographer directing between frames). |
-| `T_HARD` | 90 s | At or above this, presumed new set (moved location or changed setup). |
-| `H_SAME` | 6 | dHash distance for "near-identical framing". |
-| `C_SAME` | 0.08 | Histogram distance for "same scene colours". |
-| `H_LOW` | 14 | Moderate structural change. |
-| `C_LOW` | 0.20 | Moderate colour change. |
-| `H_HIGH` | 24 | Strong structural change. |
-| `C_HIGH` | 0.35 | Strong colour change. |
-| `MIN_GROUP` | 2 | See post-pass. |
-| `MAX_GROUP` | 20 | Also the Gemini one-call cap (`GEMINI_GROUP_MAX`). |
+| Name | Initial | **Chosen 2026-11-26** | Meaning |
+|---|---|---|---|
+| `T_SOFT` | 20 s | **15 s** | Below this, frames are presumed same-set (photographer directing between frames). |
+| `T_HARD` | 90 s | 90 s | At or above this, presumed new set (moved location or changed setup). |
+| `H_SAME` | 6 | 6 | dHash distance for "near-identical framing". |
+| `C_SAME` | 0.08 | 0.08 | Histogram distance for "same scene colours". |
+| `H_LOW` | 14 | **10** | Moderate structural change. |
+| `C_LOW` | 0.20 | **0.15** | Moderate colour change. |
+| `H_HIGH` | 24 | 24 | Strong structural change. |
+| `C_HIGH` | 0.35 | 0.35 | Strong colour change. |
+| `MIN_GROUP` | 2 | 2 | See post-pass. |
+| `MAX_GROUP` | 20 | 20 | Also the Gemini one-call cap (`GEMINI_GROUP_MAX`). |
+
+The chosen values are `GROUPING_VERSION` 2: the fixed time rule with the
+combination from the Wat Arun sweep that changes the fewest initial values
+(3 corrections, against 6 with the initial guesses). `FAST_RULE` stays `and`.
+The adaptive time term below tied it and stays available but off.
 
 The thresholds live in one constants block per implementation
 (`core/group.py`, `frontend/src/lib/group.js`), versioned as
@@ -710,6 +722,33 @@ In scope:
 Out of scope: API, frontend.
 
 **Gate:** on Wat Arun, the §12 targets are met (or the owner accepts the measured numbers). Thresholds and weights are set from the sweep, and LEARNINGS.md is updated with what the evaluation showed.
+
+**Gate passed (2026-11-26).** Measured on Wat Arun (187 photos, 36 labelled
+sets) with the chosen defaults, forced spread off, 3 Gemini runs:
+
+| Metric | Measured | Target | |
+|---|---|---|---|
+| Corrections needed | **3** (1 merge, 2 splits) | ≤ 3 | met |
+| Boundary F1 (precision / recall) | 0.96 (0.97 / 0.94) | ≥ 0.90 | met |
+| Exact-set match | 86% | ≥ 80% | met |
+| Oracle top-1 | **44%** (42–47% over runs) | ≥ 50% | below target; within Gemini's run-to-run range; **accepted by owner** |
+| Oracle top-3 | **79%** (78–81%) | ≥ 80% | 1 point below target; within run-to-run range; **accepted by owner** |
+| MRR | 0.63 | reported | random top-1 baseline 23% |
+| End to end vs oracle top-1 | 44% vs 47% (run 1) | within 10 points | met; 2 shortlist holes |
+
+The owner first accepted the gate on the 34-set figures (top-1 46%, top-3
+81%), measured before sets 2 and 8 could be scored. With every set scored, set 2
+is the main difference: Gemini ranks the owner's pick 4th or 5th of 5.
+Gemini latency per set peaked at 16 s (13 photos: 15.9 s).
+
+**Defaults chosen:**
+- Grouping: fixed time rule, `T_SOFT` 15 s, `H_LOW` 10, `C_LOW` 0.15, others unchanged (`GROUPING_VERSION` 2, §7.3). The adaptive time rule stays available, off.
+- `SHOOT_WEIGHTS`: face_sharpness 0.1, expression 0.3, subject_focus 0.3, composition 0.3, all other axes 0 (§6.3).
+- Forced spread off in shoot mode (Q6).
+
+With every set scored, every candidate weight set in the report (expression
+alone included) is within run-to-run range of the best, so the weights are not
+what limits top-1. The full report is `eval_shoot.py --stage all` (§12.7).
 
 *Shippable as:* a working CLI for culling a shoot on the laptop or Pi.
 

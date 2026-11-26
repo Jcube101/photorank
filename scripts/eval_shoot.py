@@ -1047,7 +1047,7 @@ def report_weight_candidates(lines, truth_sets, per_run, spread) -> None:
                  _mean_range(rr["top3"]), f"{rr['mrr']:.2f}", ""])
     lines += _table(["Weights", "Axes", "Top-1", "Top-3", "MRR", "Within range"], rows)
     lines += [(f"Simplest candidate within range: **{_describe_weights(c['simplest']['weights'])}** "
-               f"({c['simplest']['axes']} axes)."), ""]
+               f"({c['simplest']['axes']} {'axis' if c['simplest']['axes'] == 1 else 'axes'})."), ""]
 
 
 def report_e2e(lines, input_dir, truth_sets, predicted, cache, spread, cached_only=False) -> None:

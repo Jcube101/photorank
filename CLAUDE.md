@@ -48,18 +48,21 @@ it did. Never show only a final number.
   sessionStorage result persistence, manifest + service worker (offline shell)
 - Outstanding (non-blocking follow-ups, not gate items): timed 20-photo on-device
   run (<90s) and a formal Lighthouse PWA audit
-- **v2 "Full shoot" Phase A (CLI + evaluation): built, gate NOT yet passed.**
+- **v2 "Full shoot" Phase A (CLI + evaluation): Complete. Gate passed 2026-11-26.**
   `--mode shoot` groups an ordered shoot into sets and picks a winner per set.
   The Wat Arun answer key is committed (`eval/wat_arun/answer_key.json`):
   `input/wat_arun/` holds 187 JPGs (DSC00001–DSC00190 with 00062/66/68
-  missing), labelled as 36 sets; the engine proposes 30. The key was built with
+  missing), labelled as 36 sets. The key was built with
   `scripts/label_shoot.py`, a labelling page that corrects the proposal (see
-  eval/README.md). Thresholds and `SHOOT_WEIGHTS` are still the plan's initial
-  guesses; tuning candidates are in the eval report for the owner to choose.
-  Decided 2026-11-26 (V2-PLAN header): forced spread off in shoot mode (code
-  default not flipped yet), one set per synchronous request instead of the
-  jobs API (J9), and the results UI shows each set's top 3. No API or frontend
-  work yet (Phase B). Design: `docs/V2-PLAN.md`; review and open decisions:
+  eval/README.md). Gate numbers: 3 grouping corrections; oracle top-1 44% and
+  top-3 79%, both just under target but within Gemini's run-to-run range and
+  accepted by the owner (ROADMAP, V2-PLAN §11). Defaults set from the
+  evaluation: `T_SOFT` 15 s, `H_LOW` 10, `C_LOW` 0.15 (`GROUPING_VERSION` 2);
+  `SHOOT_WEIGHTS` face_sharpness 0.1, expression / subject_focus /
+  composition 0.3 each; forced spread off in shoot mode. Also decided
+  2026-11-26: one set per synchronous request instead of the jobs API (J9),
+  and the results UI shows each set's top 3. **Next: Phase B** (API and
+  frontend for shoot mode); none of it is built yet. Design: `docs/V2-PLAN.md`; review and open decisions:
   `docs/V2-REVIEW.md`. Archetype 2 is now in scope for the CLI only.
 
 ---
