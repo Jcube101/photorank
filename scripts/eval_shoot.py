@@ -1051,7 +1051,9 @@ def report_e2e(lines, input_dir, truth_sets, predicted, cache, spread, cached_on
     if oracle.get("sets"):
         rows.append(["Oracle top-1 for comparison (target: within 10 points)", f"{oracle['top1']:.0%}"])
     if m["failed_groups"]:
-        rows.append(["**Predicted groups that could not be scored**", m["failed_groups"]])
+        what = ("not in the cache (cached-only run; their true sets are skipped)" if cached_only
+                else "that could not be scored")
+        rows.append([f"**Predicted groups {what}**", m["failed_groups"]])
     lines += _table(["Metric", "Value"], rows)
 
 

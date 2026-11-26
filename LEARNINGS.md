@@ -230,7 +230,7 @@ are equal.
 ---
 
 **Discovery:** Gemini can write a photo's position into its filename. Shoot mode labelled each photo "Photo N — photo_id: <filename>". For the set DSC00005–DSC00009 (photos 1–5), Gemini returned `DSC00003.JPG` and `DSC00004.JPG` for photos 3 and 4, in all 6 evaluation runs and again in a diagnostic call. The set was then missing two photos and failed. That check sat outside the retry loop, so it failed at once. Two other sets failed intermittently (4 of 6 and 1 of 6 runs). Their error text was not kept, so their cause is unconfirmed.
-**Impact:** Shoot mode now labels photos `photo_1` … `photo_N`, so the label is the position and cannot be confused with it. It maps replies back by label, rewrites labels in notes to filenames, and retries a reply that names the wrong photos (`strict_ids`). Set mode is unchanged. On a mismatch it still silently drops the photo from the ranking, and `api/main.py` logs its filename (privacy rule 2). That is a follow-up.
+**Impact:** Shoot mode now labels photos `photo_1` … `photo_N`, so the label is the position and cannot be confused with it. It maps replies back by label, rewrites labels in notes to filenames, and retries a reply that names the wrong photos (`strict_ids`). Checked live: both sets that had failed then scored on the first request, spread off and on (4 of 4 calls, no retries). Set mode is unchanged. On a mismatch it still silently drops the photo from the ranking, and `api/main.py` logs its filename (privacy rule 2). That is a follow-up.
 **Date:** 2026-11-26
 
 ---
