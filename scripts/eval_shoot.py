@@ -38,6 +38,7 @@ from pathlib import Path
 import numpy as np
 
 from core.group import (
+    ADAPTIVE_DEFAULTS,
     THRESHOLDS,
     extract_features,
     group_measured,
@@ -53,7 +54,7 @@ V1_BLUR_GATE  = 100.0
 # Threshold values tried by the grouping sweep. 65 and 1.01 are out of range
 # for dh and dc, so they switch that signal off in rule 3.
 SWEEP_GRID: dict[str, list] = {
-    "T_SOFT":    [10, 20, 30],
+    "T_SOFT":    [10, 15, 20, 30],
     "T_HARD":    [60, 90, 120, 180],
     "H_SAME":    [4, 6, 8],
     "C_SAME":    [0.05, 0.08, 0.12],
@@ -63,6 +64,25 @@ SWEEP_GRID: dict[str, list] = {
     "C_HIGH":    [0.25, 0.35, 0.45],
     "FAST_RULE": ["and", "or", "dh"],
     "MIN_GROUP": [1, 2],
+}
+
+# Fixed vs adaptive time rule (V2-PLAN §7.3, §12.2 step 4). Both rules are
+# swept over the same grid of the thresholds that interact with time; the
+# others stay at their defaults. The fixed rule varies T_SOFT. The adaptive
+# rule replaces T_SOFT with three knobs (core/group.py:ADAPTIVE_DEFAULTS).
+TIME_RULE_SHARED: dict[str, list] = {
+    "T_HARD":    [60, 90, 120],
+    "H_LOW":     [10, 14, 18, 65],
+    "C_LOW":     [0.15, 0.20, 0.30, 1.01],
+    "FAST_RULE": ["and", "or", "dh"],
+    "MIN_GROUP": [1, 2],
+}
+FIXED_TIME_GRID: dict[str, list] = {"T_SOFT": [5, 8, 10, 12, 15, 20, 30]}
+ADAPTIVE_TIME_GRID: dict[str, list] = {
+    "TIME_RULE": ["adaptive"],
+    "T_MIN":     [4, 6, 8, 10, 12],
+    "ADAPT_K":   [2, 3, 4, 6, 8],
+    "ADAPT_N":   [5, 10, 20],
 }
 
 
@@ -233,6 +253,15 @@ def sweep_thresholds(
 
     best = min(c for c, _ in results)
     near = [combo for c, combo in results if c <= best + 1]
+
+    # Of the combinations that reach the best, the one that changes the
+    # fewest defaults (grid order breaks ties): the cheapest change to adopt.
+    defaults = {**THRESHOLDS, **ADAPTIVE_DEFAULTS}
+    def changes(combo: tuple) -> int:
+        return sum(1 for n, v in zip(names, combo, strict=True)
+                   if n != "TIME_RULE" and defaults[n] != v)
+    closest = min((combo for c, combo in results if c == best), key=changes)
+
     marginals = {}
     for i, name in enumerate(names):
         marginals[name] = []
@@ -250,7 +279,36 @@ def sweep_thresholds(
         "near_best":        len(near),
         "marginals":        marginals,
         "best_examples":    [dict(zip(names, combo, strict=True)) for c, combo in results if c == best][:5],
+        "closest_best":     dict(zip(names, closest, strict=True)),
+        "closest_changes":  changes(closest),
     }
+
+
+def compare_time_rules(
+    ordered_ids: list[str],
+    measured: list[dict],
+    truth: list[list[str]],
+    order: str,
+) -> dict:
+    """
+    Best fixed vs best adaptive time rule over the same grid (§7.3).
+
+    For each rule: the sweep, and the best combination closest to the
+    defaults with its boundary metrics and grouping. "default" is today's
+    thresholds, for reference.
+    """
+    out = {"default": {"grouping": group_measured(ordered_ids, measured, None, order)}}
+    for name, extra in (("fixed", FIXED_TIME_GRID), ("adaptive", ADAPTIVE_TIME_GRID)):
+        sweep = sweep_thresholds(ordered_ids, measured, truth, order, {**TIME_RULE_SHARED, **extra})
+        out[name] = {
+            "sweep":    sweep,
+            "chosen":   sweep["closest_best"],
+            "grouping": group_measured(ordered_ids, measured, sweep["closest_best"], order),
+        }
+    for result in out.values():
+        predicted = [g["photo_ids"] for g in result["grouping"]["groups"]]
+        result["metrics"] = boundary_metrics(predicted, truth)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +352,28 @@ class Cache:
             runs = self.data["scores"].setdefault(variant, {}).setdefault(str(run), {})
             runs[self.group_key(photo_ids)] = scored
         self.save()
+
+    def slice_scores(self, variant: str, run: int, photo_ids: list[str]) -> dict | None:
+        """
+        Scores for a set that was split after it was scored: the rows of a
+        larger cached group, from the same run, that holds the set as one
+        contiguous run of photos. This is the plan's on-device split (§10.4):
+        both halves come from one Gemini call, so their scores stay
+        comparable. Returns None when no cached group holds the set.
+        """
+        want = list(photo_ids)
+        for group in self.data["scores"].get(variant, {}).get(str(run), {}).values():
+            ids = [p["photo_id"] for p in group["photos"]]
+            if len(ids) <= len(want):
+                continue
+            for start in range(len(ids) - len(want) + 1):
+                if ids[start : start + len(want)] == want:
+                    return {
+                        "photos":      [dict(p) for p in group["photos"][start : start + len(want)]],
+                        "photo_count": len(want),
+                        "sliced_from": len(ids),
+                    }
+        return None
 
 
 def variant_key(force_spread: bool) -> str:
@@ -340,22 +420,31 @@ def score_sets(
     cache: Cache,
     force_spread: bool,
     run: int,
+    cached_only: bool = False,
 ) -> list[dict | None]:
     """
     Raw scores for each set, from the cache where possible.
 
     Returns one entry per set, in order. An entry is None when scoring failed;
     failures are reported and never filled with default scores.
-    """
-    from core.ingest import cleanup, ingest
-    from core.score_vision import MAX_CONCURRENCY
-    from core.shoot import score_group
 
+    With cached_only, Gemini is never called. A set that is not cached as
+    itself is sliced from a larger cached group that holds it
+    (Cache.slice_scores); otherwise its entry is None.
+    """
     variant = variant_key(force_spread)
     results = [cache.get_scores(variant, run, ids) for ids in sets]
     pending = [i for i, r in enumerate(results) if r is None]
     if not pending:
         return results
+    if cached_only:
+        for i in pending:
+            results[i] = cache.slice_scores(variant, run, sets[i])
+        return results
+
+    from core.ingest import cleanup, ingest
+    from core.score_vision import MAX_CONCURRENCY
+    from core.shoot import score_group
 
     spread = "on" if force_spread else "off"
     print(
@@ -393,6 +482,44 @@ def renormalised(axes: list[str]) -> dict[str, float]:
     """SHOOT_WEIGHTS restricted to some axes and rescaled to sum to 1."""
     total = sum(SHOOT_WEIGHTS[a] for a in axes)
     return {a: (SHOOT_WEIGHTS[a] / total if a in axes else 0.0) for a in SHOOT_AXES}
+
+
+def _weights(**nonzero: float) -> dict[str, float]:
+    return {a: nonzero.get(a, 0.0) for a in SHOOT_AXES}
+
+
+# Simple, round SHOOT_WEIGHTS candidates for the oracle report (§12.3). A few
+# sensible points instead of the sweep's single best: with ~30 sets one set is
+# about 3 points, less than Gemini's run-to-run range, so prefer the simplest
+# candidate that is within range of the best on both top-1 and top-3.
+WEIGHT_CANDIDATES: list[dict[str, float]] = [
+    dict(SHOOT_WEIGHTS),
+    _weights(face_sharpness=0.1, expression=0.3, composition=0.3, subject_focus=0.3),
+    _weights(face_sharpness=0.1, expression=0.3, camera_engagement=0.2, composition=0.2,
+             subject_focus=0.2),
+    _weights(face_sharpness=0.2, expression=0.3, camera_engagement=0.1, composition=0.2,
+             subject_focus=0.2),
+    _weights(face_sharpness=0.2, expression=0.2, camera_engagement=0.2, composition=0.2,
+             subject_focus=0.2),
+    _weights(expression=0.25, camera_engagement=0.25, composition=0.25, subject_focus=0.25),
+    _weights(expression=0.4, composition=0.3, subject_focus=0.3),
+    _weights(expression=1.0),
+]
+
+
+def relative_rank_metrics(truth: list[dict], scored: list[dict | None]) -> dict:
+    """Top-1 / top-3 / MRR of Gemini's own relative_rank, with no weights at all."""
+    ranks = []
+    for entry, group in zip(truth, scored, strict=True):
+        if group is None:
+            continue
+        order = [p["photo_id"] for p in sorted(group["photos"], key=lambda p: p["relative_rank"])]
+        ranks.append(order.index(entry["pick"]) + 1)
+    if not ranks:
+        return {"sets": 0}
+    n = len(ranks)
+    return {"sets": n, "top1": sum(r == 1 for r in ranks) / n,
+            "top3": sum(r <= 3 for r in ranks) / n, "mrr": sum(1 / r for r in ranks) / n}
 
 
 def ablation_weights() -> dict[str, dict[str, float]]:
@@ -658,22 +785,107 @@ def report_grouping(lines, ordered_ids, measured, truth_sets, order, do_sweep) -
         lines += _table(["Threshold", "Value", "Best corrections", "Within one of best"], rows)
         lines += ["Example best combinations:", ""]
         lines += [f"- `{json.dumps(example)}`" for example in sweep["best_examples"]] + [""]
+        lines += [(f"Best combination closest to the defaults ({sweep['closest_changes']} "
+                   f"change(s)): `{json.dumps(_changed(sweep['closest_best']))}`"), ""]
+
+        print("[eval] comparing fixed and adaptive time rules...", file=sys.stderr)
+        report_time_rules(lines, compare_time_rules(ordered_ids, measured, truth, order), true)
     return predicted
 
 
-def report_oracle(lines, input_dir, truth_sets, cache, runs, spreads, step) -> None:
+def _changed(combo: dict) -> dict:
+    """The entries of a threshold combination that differ from the defaults."""
+    defaults = {**THRESHOLDS, **ADAPTIVE_DEFAULTS}
+    return {k: v for k, v in combo.items() if k == "TIME_RULE" or defaults[k] != v}
+
+
+def report_time_rules(lines: list[str], cmp: dict, true: set[int]) -> None:
+    shared = ", ".join(TIME_RULE_SHARED)
+    lines += [
+        "### Fixed vs adaptive time rule (§7.3)", "",
+        (f"Both rules are swept over the same grid of {shared}; the other thresholds stay at "
+         "their defaults. The fixed rule tries T_SOFT values. The adaptive rule replaces T_SOFT "
+         "with a pause of max(T_MIN, ADAPT_K × median dt of the last ADAPT_N same-set pairs). "
+         "Each row's combination is the best one that changes the fewest defaults."), "",
+    ]
+    rows = []
+    for name, label in (("default", "Defaults"), ("fixed", "Best fixed"), ("adaptive", "Best adaptive")):
+        r, m = cmp[name], cmp[name]["metrics"]
+        sweep = r.get("sweep")
+        rows.append([
+            label,
+            "–" if not sweep else f"{sweep['combos']:,}",
+            "–" if not sweep else f"{sweep['near_best'] / sweep['combos']:.0%}",
+            "–" if not sweep else f"`{json.dumps(_changed(r['chosen']))}`",
+            f"**{m['corrections']}** ({m['false_boundaries']} merges, {m['missed_boundaries']} splits)",
+            f"{m['precision']:.2f}", f"{m['recall']:.2f}", f"{m['f1']:.2f}",
+        ])
+    lines += _table(["Rule", "Combinations", "Within one of best", "Changes from defaults",
+                     "Corrections", "Precision", "Recall", "F1"], rows)
+
+    def wrong(name: str) -> dict[int, dict]:
+        pairs = cmp[name]["grouping"]["pairs"]
+        return {i: p for i, p in enumerate(pairs) if p["final_boundary"] != (i in true)}
+
+    errors = {name: wrong(name) for name in ("default", "fixed", "adaptive")}
+    pairs  = cmp["adaptive"]["grouping"]["pairs"]      # carries t_pause for every pair
+    lines += [("Every pair that any of the three gets wrong. ✓ is a correct decision; "
+               "the adaptive column shows the pause threshold the pair was held to."), ""]
+    def cell(name: str, i: int) -> str:
+        if i not in errors[name]:
+            return "✓"
+        return "false boundary" if i not in true else "missed"
+
+    rows = []
+    for i in sorted(set().union(*errors.values())):
+        p = pairs[i]
+        rows.append([
+            f"{_stem(p['a'])} → {_stem(p['b'])}",
+            "new set" if i in true else "same set",
+            "n/a" if p["dt"] is None else f"{p['dt']:.0f}", p["dh"],
+            "n/a" if p["dc"] is None else f"{p['dc']:.3f}",
+            cell("default", i), cell("fixed", i), f"{cell('adaptive', i)} (pause {p['t_pause']:.0f} s)",
+        ])
+    lines += _table(["Between", "Truth", "dt (s)", "dh", "dc", "Defaults", "Best fixed",
+                     "Best adaptive"], rows)
+
+    lines += [("Time knobs: the best corrections each value reaches, and the share of its "
+               "combinations within one of that rule's best."), ""]
+    rows = []
+    for name, grid in (("fixed", FIXED_TIME_GRID), ("adaptive", ADAPTIVE_TIME_GRID)):
+        for knob in grid:
+            if knob == "TIME_RULE":
+                continue
+            for v in cmp[name]["sweep"]["marginals"][knob]:
+                rows.append([name, knob, v["value"], v["best"], f"{v['near_share']:.0%}"])
+    lines += _table(["Rule", "Knob", "Value", "Best corrections", "Within one of best"], rows)
+
+
+def report_oracle(lines, input_dir, truth_sets, cache, runs, spreads, step, cached_only=False) -> None:
     sets = [s["photo_ids"] for s in truth_sets]
     scored = {
-        spread: [score_sets(input_dir, sets, cache, spread, run) for run in range(runs)]
+        spread: [score_sets(input_dir, sets, cache, spread, run, cached_only) for run in range(runs)]
         for spread in spreads
     }
 
     lines += ["## Picks with oracle grouping (§12.3a)", ""]
+    if cached_only:
+        lines += ["Cached scores only: no Gemini calls were made for this report.", ""]
     for spread, per_run in scored.items():
-        failed = sum(1 for g in per_run[0] if g is None)
-        if failed:
-            lines += [(f"**{failed} of {len(sets)} sets could not be scored (spread "
-                      f"{'on' if spread else 'off'}) and are excluded. Re-run to retry.**"), ""]
+        label = "on" if spread else "off"
+        for run, groups in enumerate(per_run, 1):
+            failed = [s["set"] for s, g in zip(truth_sets, groups, strict=True) if g is None]
+            sliced = [s["set"] for s, g in zip(truth_sets, groups, strict=True)
+                      if g is not None and "sliced_from" in g]
+            if failed:
+                why = ("are not in the cache" if cached_only
+                       else "could not be scored. Re-run to retry")
+                lines += [(f"**Spread {label}, run {run}: {len(failed)} of {len(sets)} sets "
+                          f"{why} and are excluded (sets {', '.join(map(str, failed))}).**"), ""]
+            if sliced:
+                lines += [(f"Spread {label}, run {run}: sets {', '.join(map(str, sliced))} were "
+                          "split after scoring, so they are re-ranked from the cached group "
+                          "that holds them (§10.4)."), ""]
 
     rows = []
     for spread, per_run in scored.items():
@@ -695,6 +907,8 @@ def report_oracle(lines, input_dir, truth_sets, cache, runs, spreads, step) -> N
     lines += _table(["Weights", "Forced spread", "Top-1", "Top-3", "MRR", "Lenient top-1"], rows)
     lines += [("\"Gemini axes only\" is the four Gemini axes of SHOOT_WEIGHTS rescaled to sum "
               "to 1."), ""]
+
+    report_weight_candidates(lines, truth_sets, scored[spreads[0]], spreads[0])
 
     primary = scored[spreads[0]]
     averaged = mean_scores(primary)
@@ -741,11 +955,91 @@ def report_oracle(lines, input_dir, truth_sets, cache, runs, spreads, step) -> N
             ])
 
 
-def report_e2e(lines, input_dir, truth_sets, predicted, cache, spread) -> None:
-    scored = score_sets(input_dir, predicted, cache, spread, 0)
+def _describe_weights(weights: dict[str, float]) -> str:
+    return ", ".join(f"{a} {w:g}" for a, w in weights.items() if w > 0)
+
+
+def candidate_metrics(truth_sets: list[dict], per_run: list[list[dict | None]]) -> dict:
+    """
+    WEIGHT_CANDIDATES (and Gemini's relative_rank) over the sets scored in
+    every run, so every candidate and run is measured on the same sets.
+
+    Returns {"sets", "rows": [{"weights", "axes", "top1", "top3", "mrr",
+    "within_range"}], "relative_rank", "simplest"}. top1 and top3 are
+    per-run lists. A candidate is within range when, on both top-1 and
+    top-3, its min–max range over runs overlaps that of the candidate with
+    the best mean: the difference is no larger than Gemini's own noise.
+    "simplest" is the within-range candidate with the fewest axes, then the
+    best mean top-3 (the results UI shows each set's top 3), then top-1.
+    """
+    common = [i for i in range(len(truth_sets)) if all(run[i] is not None for run in per_run)]
+    truth  = [truth_sets[i] for i in common]
+    runs   = [[run[i] for i in common] for run in per_run]
+    if not truth:
+        return {"sets": 0}
+
+    rows = []
+    for weights in WEIGHT_CANDIDATES:
+        ms = [pick_metrics(truth, run, weights) for run in runs]
+        rows.append({
+            "weights": weights,
+            "axes":    sum(1 for w in weights.values() if w > 0),
+            "top1":    [m["top1"] for m in ms],
+            "top3":    [m["top3"] for m in ms],
+            "mrr":     statistics.fmean(m["mrr"] for m in ms),
+        })
+    floor = {
+        metric: min(max(rows, key=lambda r, m=metric: statistics.fmean(r[m]))[metric])
+        for metric in ("top1", "top3")
+    }
+    for r in rows:
+        r["within_range"] = all(max(r[m]) >= floor[m] - 1e-9 for m in ("top1", "top3"))
+    simplest = min(
+        (r for r in rows if r["within_range"]),
+        key=lambda r: (r["axes"], -statistics.fmean(r["top3"]), -statistics.fmean(r["top1"])),
+    )
+
+    rr = [relative_rank_metrics(truth, run) for run in runs]
+    return {
+        "sets":          len(truth),
+        "rows":          rows,
+        "simplest":      simplest,
+        "relative_rank": {"top1": [m["top1"] for m in rr], "top3": [m["top3"] for m in rr],
+                          "mrr": statistics.fmean(m["mrr"] for m in rr)},
+    }
+
+
+def report_weight_candidates(lines, truth_sets, per_run, spread) -> None:
+    c = candidate_metrics(truth_sets, per_run)
+    if not c["sets"]:
+        return
+    lines += [
+        f"### Weight candidates (forced spread {'on' if spread else 'off'})", "",
+        (f"A few simple, round weight sets, each scored on the {c['sets']} sets that have scores "
+         f"in all {len(per_run)} run(s). Mean (min–max) over runs. \"Within range\" means the "
+         "min–max range overlaps the best candidate's on both top-1 and top-3, so the "
+         "difference from the best is no larger than Gemini's own run-to-run range."), "",
+    ]
+    rows = []
+    for r in c["rows"]:
+        label = _describe_weights(r["weights"])
+        if r["weights"] == SHOOT_WEIGHTS:
+            label = f"current SHOOT_WEIGHTS: {label}"
+        rows.append([label, r["axes"], _mean_range(r["top1"]), _mean_range(r["top3"]),
+                     f"{r['mrr']:.2f}", "yes" if r["within_range"] else ""])
+    rr = c["relative_rank"]
+    rows.append(["Gemini relative_rank alone (no weights)", "–", _mean_range(rr["top1"]),
+                 _mean_range(rr["top3"]), f"{rr['mrr']:.2f}", ""])
+    lines += _table(["Weights", "Axes", "Top-1", "Top-3", "MRR", "Within range"], rows)
+    lines += [(f"Simplest candidate within range: **{_describe_weights(c['simplest']['weights'])}** "
+               f"({c['simplest']['axes']} axes)."), ""]
+
+
+def report_e2e(lines, input_dir, truth_sets, predicted, cache, spread, cached_only=False) -> None:
+    scored = score_sets(input_dir, predicted, cache, spread, 0, cached_only)
     m      = e2e_metrics(truth_sets, predicted, scored)
     oracle = pick_metrics(truth_sets, score_sets(input_dir, [s["photo_ids"] for s in truth_sets],
-                                                 cache, spread, 0))
+                                                 cache, spread, 0, cached_only))
     lines += ["## End to end (§12.3b)", "",
               ("Predicted groups (default thresholds), then predicted winners. Run 1, forced "
               f"spread {'on' if spread else 'off'}."), ""]
@@ -779,6 +1073,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--step", type=float, default=0.10,
                         help="Weight sweep grid step (default 0.10; 0.05 is ~888k candidates)")
     parser.add_argument("--no-sweep", action="store_true", help="Skip the threshold sweep")
+    parser.add_argument("--cached-only", action="store_true",
+                        help=("Never call Gemini: use cached scores only. A set split after "
+                              "scoring is re-ranked from the cached group that holds it; "
+                              "other uncached sets are excluded"))
     parser.add_argument("--report", default=None,
                         help="Markdown report path (default: output/eval_<shoot>_report.md)")
     args = parser.parse_args(argv)
@@ -810,9 +1108,10 @@ def main(argv: list[str] | None = None) -> int:
         predicted = report_grouping(lines, ordered_ids, measured, truth_sets, order,
                                     do_sweep=not args.no_sweep and args.stage != "e2e")
     if args.stage in ("oracle", "all"):
-        report_oracle(lines, args.input, truth_sets, cache, args.runs, spreads, args.step)
+        report_oracle(lines, args.input, truth_sets, cache, args.runs, spreads, args.step,
+                      args.cached_only)
     if args.stage in ("e2e", "all"):
-        report_e2e(lines, args.input, truth_sets, predicted, cache, spreads[0])
+        report_e2e(lines, args.input, truth_sets, predicted, cache, spreads[0], args.cached_only)
 
     report = Path(args.report or f"output/eval_{shoot}_report.md")
     report.parent.mkdir(parents=True, exist_ok=True)
