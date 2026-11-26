@@ -410,14 +410,12 @@ def main() -> None:
             print(f"[perf] gemini total: {time.perf_counter() - _t:.2f}s", file=sys.stderr)
             print(f"[perf] PIPELINE TOTAL: {time.perf_counter() - _perf_t0:.2f}s", file=sys.stderr)
 
+            # score_photos returns one row per photo or raises; never drop one.
             gemini_by_id = {s["photo_id"]: s for s in gemini_scores}
-            merged: list[dict] = []
-            for tech in sharp_technical:
-                pid = tech["photo_id"]
-                if pid not in gemini_by_id:
-                    print(f"[rank] warning: no Gemini score for {pid}, skipping", file=sys.stderr)
-                    continue
-                merged.append(_merge(tech, gemini_by_id[pid]))
+            missing = [t["photo_id"] for t in sharp_technical if t["photo_id"] not in gemini_by_id]
+            if missing:
+                raise RuntimeError(f"Gemini returned no score for {missing}")
+            merged = [_merge(tech, gemini_by_id[tech["photo_id"]]) for tech in sharp_technical]
 
             ranked = rank_photos(merged, weights)
             _print_summary(ranked, blurry_ids)

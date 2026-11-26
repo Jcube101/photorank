@@ -371,3 +371,53 @@ def test_shoot_mode_drops_forced_spread_by_default(monkeypatch, fake_gemini):
     # Set mode always forces spread.
     score_vision.score_photos(_paths(2))
     assert "At least one photo must score below 5" in fake_gemini["system"][2]
+
+
+# ---------------------------------------------------------------------------
+# Position labels in every mode (set mode included)
+# ---------------------------------------------------------------------------
+
+def test_score_photos_labels_each_batch_by_position_and_maps_rows_back(monkeypatch, fake_gemini):
+    real = score_vision._score_batch
+
+    def remember_paths(client, config, image_paths, photo_ids, retries=2, strict_ids=False):
+        rows = real(client, config, image_paths, photo_ids, retries, strict_ids)
+        for row, path in zip(rows, image_paths, strict=True):
+            row["notes"] = f"scored {path}, better than photo_1"
+        return rows[::-1]                     # reply in any order
+
+    monkeypatch.setattr(score_vision, "_score_batch", remember_paths)
+    paths = _paths(20)
+    ids = [f"IMG_{4800 + i}.jpg" for i in range(20)]
+    scores = score_vision.score_photos(paths, photo_ids=ids)
+
+    # Set mode: batches of 8, each labelled by position within the batch.
+    assert sorted(fake_gemini["batches"], key=len) == [
+        [f"photo_{i}" for i in range(1, 5)],
+        [f"photo_{i}" for i in range(1, 9)],
+        [f"photo_{i}" for i in range(1, 9)],
+    ]
+    assert fake_gemini["strict_ids"] == [True, True, True]
+    assert all(not any(i in b for i in ids) for b in fake_gemini["batches"])   # no filenames sent
+    assert [s["photo_id"] for s in scores] == ids                               # input order
+    for i, s in enumerate(scores):
+        first_of_batch = ids[i - i % 8]
+        assert s["notes"] == f"scored {paths[i]}, better than {first_of_batch}"
+
+
+def test_score_photos_raises_rather_than_dropping_a_photo(monkeypatch, tmp_path):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(score_vision.time, "sleep", lambda s: None)
+    image = tmp_path / "a.jpg"
+    image.write_bytes(b"\xff\xd8")
+    client = _FakeClient(*[_reply("photo_1", "IMG_0002.jpg")] * 3)    # never names photo_2
+    monkeypatch.setattr(score_vision.genai, "Client", lambda api_key: client)
+
+    with pytest.raises(RuntimeError, match="after 3 attempts"):
+        score_vision.score_photos([image, image], photo_ids=["IMG_0001.jpg", "IMG_0002.jpg"])
+    assert client.calls == 3
+
+    client.texts = [_reply("photo_1", "IMG_0002.jpg"), _reply("photo_2", "photo_1")]
+    client.calls = 0
+    scores = score_vision.score_photos([image, image], photo_ids=["IMG_0001.jpg", "IMG_0002.jpg"])
+    assert client.calls == 2 and [s["photo_id"] for s in scores] == ["IMG_0001.jpg", "IMG_0002.jpg"]

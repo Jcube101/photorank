@@ -335,6 +335,46 @@ def _score_batch(
     )
 
 
+# A label Gemini sees in place of a filename; notes may mention one.
+_LABEL = re.compile(r"\bphoto_\d+\b")
+
+
+def _score_labelled_batch(
+    client: genai.Client,
+    config: types.GenerateContentConfig,
+    image_paths: list[str | Path],
+    photo_ids: list[str],
+) -> list[dict]:
+    """
+    Score one batch, shown to Gemini as photo_1 ... photo_k (positions within
+    this batch), never by filename, and map the reply back to photo_ids.
+
+    With filenames as labels, Gemini has written a photo's position into its
+    name (DSC00003.JPG for photo 3 of DSC00005-DSC00009), which loses photos.
+    A label that IS the position cannot be mixed up that way. A reply that
+    still names the wrong photos is retried (strict_ids) and, if it never
+    comes right, raises: no photo is ever dropped.
+
+    Returns one row per photo, in input order, with photo_id set to the
+    caller's id. Labels mentioned in notes are replaced with the photo_id.
+    """
+    labels = [f"photo_{i}" for i in range(1, len(photo_ids) + 1)]
+    names  = dict(zip(labels, photo_ids, strict=True))
+    rows   = {r["photo_id"]: r for r in _score_batch(client, config, image_paths, labels,
+                                                     strict_ids=True)}
+    if sorted(rows) != sorted(labels):
+        raise RuntimeError(
+            f"Gemini returned scores for {len(set(rows) & set(labels))} of {len(labels)} photos"
+        )
+    out = []
+    for label in labels:
+        row = dict(rows[label])
+        row["photo_id"] = names[label]
+        row["notes"] = _LABEL.sub(lambda m: names.get(m.group(0), m.group(0)), row["notes"])
+        out.append(row)
+    return out
+
+
 def build_system_instruction(
     profile: str = "family",
     prompt_mode: str = "default",
@@ -370,17 +410,16 @@ def score_photos(
     batch_size: int | None = None,
     prompt_mode: str = "default",
     force_spread: bool = True,
-    strict_ids: bool = False,
 ) -> list[dict]:
     """
     Score images via Gemini for semantic attributes only.
 
     Args:
         image_paths: Paths to compressed image files (output of ingest).
-        photo_ids:   Original filenames, parallel to image_paths. When provided,
-                     these are used as photo_id labels in the Gemini prompt so
-                     the returned IDs match the originals, not the compressed names.
-                     Defaults to the filename portion of each image_path.
+        photo_ids:   Original filenames, parallel to image_paths. Each returned
+                     row carries its photo's id from here. Gemini itself only
+                     sees positions (photo_1 ... photo_k within a batch), never
+                     filenames. Defaults to the filename portion of each image_path.
         profile:     Scoring profile name passed as context in the prompt.
         batch_size:  Images per Gemini request. Defaults to BATCH_SIZE (8).
                      Shoot mode passes the group size so one set is one call.
@@ -388,18 +427,18 @@ def score_photos(
                      in place of the profile context).
         force_spread: Keep the forced score-spread rule. Only shoot mode may
                      turn it off; set mode always forces spread.
-        strict_ids:  Retry a reply that does not name each photo_id exactly
-                     once, like an unparseable one. Off by default, so set
-                     mode is unchanged; shoot mode turns it on.
 
     Returns:
-        List of dicts: photo_id, subject_1_expression, subject_2_expression,
-        expression (computed weighted average), composition, subject_focus,
-        relative_rank, notes.
+        One dict per photo, in input order: photo_id, subject_1_expression,
+        subject_2_expression, expression (computed weighted average),
+        camera_engagement, composition, subject_focus, relative_rank, notes.
+        relative_rank is within the photo's batch.
 
     Raises:
         EnvironmentError: GEMINI_API_KEY not set.
-        RuntimeError:     Gemini returned unparseable JSON after retries.
+        RuntimeError:     Gemini's reply could not be parsed, or never named
+                          every photo exactly once, after retries. Never a
+                          partial result.
     """
     if not image_paths:
         return []
@@ -423,7 +462,7 @@ def score_photos(
     def _run(batch_num: int, batch_paths, batch_ids) -> list[dict]:
         t0 = time.perf_counter()
         print(f"  [perf] gemini batch {batch_num}/{n} ({len(batch_paths)} photos) START", file=sys.stderr)
-        scores = _score_batch(client, config, batch_paths, batch_ids, strict_ids=strict_ids)
+        scores = _score_labelled_batch(client, config, batch_paths, batch_ids)
         print(f"  [perf] gemini batch {batch_num}/{n} END  {time.perf_counter() - t0:.2f}s", file=sys.stderr)
         return scores
 

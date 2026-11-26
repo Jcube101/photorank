@@ -18,7 +18,6 @@ evaluation harness can cache raw scores and re-rank under other weights
 without calling Gemini again.
 """
 
-import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -38,7 +37,6 @@ _GEMINI_FIELDS = (
     "subject_1_expression", "subject_2_expression", "expression",
     "camera_engagement", "composition", "subject_focus", "relative_rank", "notes",
 )
-_LABEL = re.compile(r"\bphoto_\d+\b")
 
 
 def score_group(photos: list[dict], force_spread: bool = False) -> dict:
@@ -64,42 +62,26 @@ def score_group(photos: list[dict], force_spread: bool = False) -> dict:
 
     burst = [compute_burst_scores(p["path"], photo_id=p["photo_id"]) for p in photos]
 
-    # Gemini sees each photo by its position in the set ("photo_3"), not its
-    # filename. With camera filenames it has written a position's number
-    # into the name: for DSC00005-DSC00009 it returned DSC00003 and DSC00004
-    # for photos 3 and 4, which failed the set on every run. A label that IS
-    # the position cannot be mixed up that way, and strict_ids retries any
-    # reply that still names the wrong photos.
-    labels = [f"photo_{i}" for i in range(1, len(photos) + 1)]
-    names  = {label: b["photo_id"] for label, b in zip(labels, burst, strict=True)}
-
+    # score_photos shows Gemini positions (photo_1 ... photo_N), never
+    # filenames, and returns exactly one row per photo in this order, or
+    # raises. See score_vision._score_labelled_batch.
     t0 = time.perf_counter()
     gemini = score_photos(
         [p["path"] for p in photos],
-        photo_ids=labels,
+        photo_ids=[p["photo_id"] for p in photos],
         batch_size=len(photos),
         prompt_mode="shoot",
         force_spread=force_spread and len(photos) > 1,
-        strict_ids=True,
     )
     latency = time.perf_counter() - t0
 
-    gemini_by_label = {g["photo_id"]: g for g in gemini}
-    missing = [names[label] for label in labels if label not in gemini_by_label]
-    if missing or len(gemini_by_label) != len(burst):
-        raise RuntimeError(
-            f"Gemini returned scores for {len(gemini_by_label)} of {len(burst)} photos "
-            f"in the group (missing: {missing})"
-        )
-
     merged = []
-    for label, b in zip(labels, burst, strict=True):
-        g = gemini_by_label[label]
+    for b, g in zip(burst, gemini, strict=True):
+        if g["photo_id"] != b["photo_id"]:       # score_photos keeps input order
+            raise RuntimeError("Gemini scores came back out of order")
         row = {"photo_id": b["photo_id"]}
         row.update({k: b[k] for k in _BURST_FIELDS})
         row.update({k: g[k] for k in _GEMINI_FIELDS})
-        # A note may compare against another frame by its label.
-        row["notes"] = _LABEL.sub(lambda m: names.get(m.group(0), m.group(0)), g["notes"])
         merged.append(row)
 
     return {"photos": merged, "gemini_latency_s": round(latency, 2)}

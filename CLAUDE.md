@@ -355,6 +355,11 @@ See SPECS.md Section 5 for the complete contract and top-level output wrapper fo
 - **What to ask for:** `subject_1_expression`, `subject_2_expression`, `camera_engagement`, `composition`, `subject_focus`, `relative_rank`, `notes` (Python computes `expression` from per-subject values)
 - **What NOT to ask:** sharpness, exposure, any technical quality assessment
 - **On JSON parse failure:** strip markdown fences, retry once after 1s
+- **Photo labels:** Gemini sees each photo as `photo_1` … `photo_k`, its position
+  in the batch, never its filename (in every mode). A reply that doesn't name
+  each photo exactly once is retried like a parse failure, then raises.
+  `score_photos()` returns one row per photo in input order, or raises: it never
+  drops a photo. See LEARNINGS 2026-11-26.
 - **On any failure after retries:** raise — do not assign default scores
 - **Concurrency:** Gemini batches run **concurrently** via a `ThreadPoolExecutor`
   in `score_vision.py` (batches are independent and network-bound, so total
@@ -473,7 +478,7 @@ These cannot be relaxed for any reason:
 - `core/score_tech.py:compute_technical_scores_batch()` — batch version
 - `core/score_burst.py:compute_burst_scores()` — face-region burst scoring; accepts `photo_id` override
 - `core/score_burst.py:compute_burst_scores_batch()` — batch version
-- `core/score_vision.py:score_photos()` — Gemini semantic scoring; accepts `photo_ids` list; set mode only
+- `core/score_vision.py:score_photos()` — Gemini semantic scoring (set and shoot modes); labels photos by position, returns one row per `photo_ids` entry in order, or raises
 - `core/rank.py:rank_photos()` — merge + weight + rank (set mode)
 - `core/rank.py:_rank_burst()` — apply BURST_WEIGHTS, sort by final_score (burst mode)
 - `core/profiles.py:PROFILES` — single source of truth for all profile weight dicts
