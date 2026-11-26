@@ -50,7 +50,10 @@ it did. Never show only a final number.
   run (<90s) and a formal Lighthouse PWA audit
 - **v2 "Full shoot" Phase A (CLI + evaluation): built, gate NOT yet passed.**
   `--mode shoot` groups an ordered shoot into sets and picks a winner per set.
-  The gate needs the Wat Arun photos and a hand-labelled answer key; thresholds
+  The gate needs a hand-labelled answer key for the Wat Arun photos
+  (`input/wat_arun/`: 187 JPGs, DSC00001–DSC00190 with 00062/66/68 missing;
+  the engine proposes 30 sets). Build the key with `scripts/label_shoot.py`
+  (a labelling page that corrects the proposal; see eval/README.md). Thresholds
   and `SHOOT_WEIGHTS` are still the plan's initial guesses. No API or frontend
   work yet (Phase B). Design: `docs/V2-PLAN.md`; review and open decisions:
   `docs/V2-REVIEW.md`. Archetype 2 is now in scope for the CLI only.
@@ -169,7 +172,9 @@ photorank/
 │   ├── shoot.py            ← shoot mode: per-group scoring and ranking
 │   └── profiles.py         ← single source of truth for all profiles and weights
 ├── scripts/
-│   └── eval_shoot.py       ← shoot-mode evaluation against an answer key
+│   ├── eval_shoot.py       ← shoot-mode evaluation against an answer key
+│   ├── label_shoot.py      ← builds a page for correcting proposed sets into an answer key
+│   └── labeller/           ← that page's template, CSS, UI (app.js) and logic (core.js, tested under Node)
 ├── eval/                   ← committed answer keys (filenames only); see eval/README.md
 ├── tests/                  ← pytest suite + fixtures/grouping_golden.json
 ├── docs/                   ← V2-PLAN.md (design), V2-REVIEW.md (review)
@@ -244,6 +249,11 @@ PYTHONPATH=. ./venv/bin/python core/score_tech.py input/ --threshold 100
 # Shoot mode — group an ordered shoot into sets, one winner per set
 PYTHONPATH=. ./venv/bin/python core/rank.py --mode shoot --input /path/to/shoot \
   --output output/shoot.json
+
+# Build the answer key by correcting the proposed sets in a browser (no Gemini).
+# Writes output/labeller/ (git-ignored); serve it on localhost only.
+PYTHONPATH=. ./venv/bin/python scripts/label_shoot.py --input input/wat_arun --out output/labeller/
+python3 -m http.server 8765 --bind 127.0.0.1 --directory output/labeller
 
 # Evaluate shoot mode against an answer key (format: eval/README.md).
 # --stage grouping makes no Gemini calls; scores are cached in output/.
@@ -464,6 +474,7 @@ These cannot be relaxed for any reason:
 - `core/shoot.py:run_shoot()` — group and score a whole shoot; per-group failure isolation
 - `core/score_vision.py:build_system_instruction()` — assembles the prompt; `prompt_mode="shoot"` and `force_spread`
 - `scripts/eval_shoot.py` — answer-key evaluation harness with a score cache
+- `scripts/label_shoot.py` — labelling page builder; page logic in `scripts/labeller/core.js`, whose `validateKey()` mirrors `eval_shoot.py:resolve_key()` (tests check both agree)
 - `api/main.py:rank_endpoint()` — FastAPI POST /rank handler; saves uploads, auto-detects mode, calls ingest → score → rank, cleans up
 - `api/main.py:_auto_detect_mode()` — reads EXIF DateTimeOriginal from raw uploads; returns 'burst' if ≤6 files within 10s, else 'set'
 - `api/main.py:_run_burst()` — burst scoring sub-routine (called after EXIF stripping by ingest)

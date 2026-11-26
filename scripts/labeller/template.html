@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Label sets · __TITLE__</title>
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="bar-top">
+    <h1><span class="wide-only">Label sets <span class="muted">·</span> </span><span id="shoot"></span></h1>
+    <div class="actions-bar">
+      <button type="button" id="undo" title="Undo (Ctrl+Z)">Undo</button>
+      <button type="button" id="next">Next unpicked</button>
+      <button type="button" id="export" class="primary">Export</button>
+    </div>
+  </div>
+  <div class="bar-meta">
+    <span id="stats"></span>
+    <span id="corrections" class="muted"></span>
+    <span id="saved" class="muted"></span>
+  </div>
+</header>
+
+<main>
+  <details class="help" id="help" open>
+    <summary>How to label</summary>
+    <ul>
+      <li><b>Tap a photo</b> to make it its set's pick: the one frame you would post. One pick per set.</li>
+      <li><b>✂ Split</b> starts a new set at that photo. <b>Merge with previous</b> joins a set to the one above it.</li>
+      <li>A new set is any photo you might post alongside the others as its own photo. The same spot with a framing change (full-length to headshot) is a new set.</li>
+      <li><b>⤢</b> opens a larger view: ← → to move, P to pick, S to split, Esc to close. On a phone, swipe.</li>
+      <li>The chip on each set is why the engine proposed a boundary there. No AI scores or rankings are shown.</li>
+      <li>Progress is saved in this browser. <b>Export</b> checks every set has one pick, then downloads <code>answer_key.json</code>.</li>
+    </ul>
+  </details>
+  <div id="notice" class="panel" hidden></div>
+  <div id="problems" class="panel" hidden></div>
+  <div id="exported" class="panel ok" hidden>
+    <p id="exported-summary"></p>
+    <p>Save it in the repo as <code>eval/__SHOOT_PATH__/answer_key.json</code>: drag the downloaded file into VS Code's Explorer, or copy it into a new file there.</p>
+    <textarea id="exported-json" readonly rows="8" spellcheck="false" aria-label="answer_key.json"></textarea>
+    <div class="row">
+      <button type="button" id="copy">Copy JSON</button>
+      <span id="copy-status" class="muted" aria-live="polite"></span>
+      <button type="button" id="exported-close" class="quiet">Close</button>
+    </div>
+  </div>
+  <div id="sets"></div>
+  <footer class="foot">
+    <button type="button" id="reset" class="quiet">Reset to the proposed sets</button>
+    <p class="muted">Generated __GENERATED__ · grouping v__GROUPING_VERSION__</p>
+  </footer>
+</main>
+
+<div id="viewer" class="viewer" hidden role="dialog" aria-modal="true" aria-label="Photo viewer">
+  <div class="viewer-top">
+    <span id="viewer-caption"></span>
+    <button type="button" id="viewer-close" aria-label="Close viewer">✕</button>
+  </div>
+  <div id="viewer-stage" class="viewer-stage">
+    <img id="viewer-img" alt="">
+    <button type="button" id="viewer-prev" class="nav prev" aria-label="Previous photo">‹</button>
+    <button type="button" id="viewer-next" class="nav next" aria-label="Next photo">›</button>
+  </div>
+  <div class="viewer-bottom">
+    <button type="button" id="viewer-split">✂ Split before</button>
+    <button type="button" id="viewer-pick" class="primary">Make pick</button>
+  </div>
+</div>
+
+<script type="application/json" id="labeller-data">__DATA__</script>
+<script>
+/*__CORE__*/
+</script>
+<script>
+/*__APP__*/
+</script>
+</body>
+</html>

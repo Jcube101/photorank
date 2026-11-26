@@ -42,6 +42,45 @@ filenames only, never image data. The photos themselves stay in git-ignored
 "Shooting order" is capture time when every photo has an EXIF time, otherwise
 filename order. The report states which was used.
 
+## Building a key with the labeller
+
+Labelling a whole shoot from scratch is the chore PhotoRank exists to remove.
+The labeller starts from the engine's proposed sets instead, so you only fix
+what it got wrong and choose each set's pick.
+
+```bash
+PYTHONPATH=. ./venv/bin/python scripts/label_shoot.py \
+  --input input/wat_arun --out output/labeller/ --camera "Sony A7 III, 85mm f/1.4"
+python3 -m http.server 8765 --bind 127.0.0.1 --directory output/labeller
+```
+
+Open `http://127.0.0.1:8765/`. Over VS Code Remote-SSH the port is forwarded
+to your laptop. If it isn't, add 8765 in the Ports panel.
+
+- One row per proposed set, in shooting order, with the reason the engine
+  started it (`time_gap`, `time+visual`, …) and the gap to the previous photo.
+- Tap a photo to make it the set's pick. **✂ Split** starts a new set at a
+  photo. **Merge with previous** joins a set to the one above it. **⤢** opens a
+  large view (← → move, P pick, S split, Esc close). Undo is Ctrl+Z.
+- No AI scores or rankings are on the page, so they can't bias the picks.
+- The header counts your corrections to the proposal: merges plus splits,
+  the same "corrections needed" the evaluation reports.
+- Progress is kept in the browser's localStorage, so a reload loses nothing.
+- **Export** checks that the sets are contiguous, that they cover every photo,
+  and that each set has one pick. It then downloads `answer_key.json`. Put it
+  at `eval/<shoot>/answer_key.json`: drag it into VS Code's Explorer, or use
+  Copy JSON.
+
+The shoot name defaults to the input folder's name (`wat_arun`). The
+labeller reads and saves grouping features in `output/eval_<shoot>_scores.json`.
+The evaluation uses the same file when the key's `shoot` matches, so the shoot
+is fingerprinted only once. Thumbnails (400 px) and viewer images (1600 px) are
+written to `output/labeller/` with orientation applied and no EXIF. `output/`
+is git-ignored. Delete `output/labeller/` when the key is done.
+
+The labeller can't mark `acceptable` near-ties. Add them by hand if you want
+the lenient metric.
+
 ## Running
 
 ```bash
