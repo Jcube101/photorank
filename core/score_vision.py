@@ -223,7 +223,19 @@ def _build_batch_prompt(
     return parts
 
 
-def _parse_scores(raw: str, expected_count: int) -> list[dict]:
+def _check_ids(parsed: list[dict], expected_ids: list[str]) -> None:
+    """Raise ValueError unless the reply names each expected photo exactly once."""
+    got = [item.get("photo_id") for item in parsed]
+    if sorted(map(str, got)) != sorted(expected_ids):
+        missing    = [pid for pid in expected_ids if pid not in got]
+        unexpected = [pid for pid in got if pid not in expected_ids]
+        raise ValueError(
+            f"Reply names the wrong photos: {len(got)} objects for {len(expected_ids)} photos, "
+            f"missing {missing}, unexpected {unexpected}"
+        )
+
+
+def _parse_scores(raw: str, expected_count: int, expected_ids: list[str] | None = None) -> list[dict]:
     cleaned = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
     start   = cleaned.find("[")
     end     = cleaned.rfind("]")
@@ -267,6 +279,8 @@ def _parse_scores(raw: str, expected_count: int) -> list[dict]:
         if not isinstance(rr, int) or rr < 1 or rr > expected_count:
             raise ValueError(f"relative_rank out of range: {rr} in {item}")
 
+    if expected_ids is not None:
+        _check_ids(parsed, expected_ids)
     return parsed
 
 
@@ -289,8 +303,15 @@ def _score_batch(
     image_paths: list[str | Path],
     photo_ids: list[str],
     retries: int = 2,
+    strict_ids: bool = False,
 ) -> list[dict]:
+    """
+    One Gemini request, retried on a reply that cannot be parsed. With
+    strict_ids, a reply that does not name each photo_id exactly once also
+    counts as unparseable and is retried.
+    """
     parts         = _build_batch_prompt(image_paths, photo_ids)
+    expected_ids  = list(photo_ids) if strict_ids else None
     last_error    = None
     last_response = ""
 
@@ -301,7 +322,7 @@ def _score_batch(
             )
             # .text excludes thought parts; None when no text came back.
             last_response = response.text or ""
-            return _parse_scores(last_response, len(image_paths))
+            return _parse_scores(last_response, len(image_paths), expected_ids)
         except (ValueError, json.JSONDecodeError) as e:
             last_error = e
             if attempt < retries:
@@ -349,6 +370,7 @@ def score_photos(
     batch_size: int | None = None,
     prompt_mode: str = "default",
     force_spread: bool = True,
+    strict_ids: bool = False,
 ) -> list[dict]:
     """
     Score images via Gemini for semantic attributes only.
@@ -366,6 +388,9 @@ def score_photos(
                      in place of the profile context).
         force_spread: Keep the forced score-spread rule. Only shoot mode may
                      turn it off; set mode always forces spread.
+        strict_ids:  Retry a reply that does not name each photo_id exactly
+                     once, like an unparseable one. Off by default, so set
+                     mode is unchanged; shoot mode turns it on.
 
     Returns:
         List of dicts: photo_id, subject_1_expression, subject_2_expression,
@@ -398,7 +423,7 @@ def score_photos(
     def _run(batch_num: int, batch_paths, batch_ids) -> list[dict]:
         t0 = time.perf_counter()
         print(f"  [perf] gemini batch {batch_num}/{n} ({len(batch_paths)} photos) START", file=sys.stderr)
-        scores = _score_batch(client, config, batch_paths, batch_ids)
+        scores = _score_batch(client, config, batch_paths, batch_ids, strict_ids=strict_ids)
         print(f"  [perf] gemini batch {batch_num}/{n} END  {time.perf_counter() - t0:.2f}s", file=sys.stderr)
         return scores
 
