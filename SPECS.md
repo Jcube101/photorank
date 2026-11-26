@@ -657,6 +657,10 @@ stack traces are never surfaced:
   so the **upload screen works offline**; an offline banner and the offline
   error state prompt the user to connect to score. **The `/rank` API is never
   cached** (the SW bypasses the `job-joseph.com` host and all non-GET requests).
+- **Updates:** the API serves every static file outside `assets/` (`index.html`,
+  `sw.js`, manifest, icons) with `Cache-Control: no-cache`, so a new build
+  reaches an installed PWA on its next online launch. `assets/` files are
+  content-hashed and need no header.
 - Add-to-Home-Screen prompt is offered after the first successful ranking
   (`beforeinstallprompt` on Chrome/Android; a manual hint on iOS Safari).
 

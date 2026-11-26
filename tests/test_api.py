@@ -117,6 +117,27 @@ def _jpeg(seed: int) -> bytes:
     return buf.tobytes()
 
 
+def test_app_shell_is_revalidated_but_hashed_assets_are_not(tmp_path):
+    """An installed PWA must pick up a new build on its next launch."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    (tmp_path / "assets").mkdir()
+    for name in ("index.html", "sw.js", "manifest.webmanifest", "assets/index-abc123.js"):
+        (tmp_path / name).write_text("x")
+    app = FastAPI()
+    app.mount("/", api._SpaStaticFiles(directory=tmp_path, html=True))
+    client = TestClient(app)
+
+    for path in ("/", "/index.html", "/sw.js", "/manifest.webmanifest", "/some/deep/link"):
+        res = client.get(path)
+        assert res.status_code == 200 and res.headers.get("cache-control") == "no-cache", path
+        etag = res.headers["etag"]
+        again = client.get(path, headers={"if-none-match": etag})
+        assert again.status_code in (200, 304) and again.headers.get("cache-control") == "no-cache"
+    assert "cache-control" not in client.get("/assets/index-abc123.js").headers
+
+
 @pytest.mark.parametrize("mode", ["burst", "set"])
 def test_rank_returns_the_uploaded_names_as_photo_ids(monkeypatch, mode):
     from fastapi.testclient import TestClient

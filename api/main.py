@@ -391,15 +391,25 @@ class _SpaStaticFiles(StaticFiles):
     """
     Serve the built React PWA, falling back to index.html for any unmatched
     path so client-side routing (React Router) works on deep links / refresh.
+
+    Everything outside assets/ (index.html, sw.js, the manifest, icons) is sent
+    with Cache-Control: no-cache, so the browser revalidates it on every load
+    (a cheap 304 via the ETag). Without it, Chrome caches index.html by
+    heuristic for 10% of its age, and an installed PWA can keep loading the
+    old shell for weeks after a deploy. Files in assets/ are named by content
+    hash, so a new build never reuses their URLs.
     """
 
     async def get_response(self, path: str, scope):
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code == 404:
-                return FileResponse(self.directory / "index.html")
-            raise
+            if exc.status_code != 404:
+                raise
+            response = FileResponse(self.directory / "index.html")
+        if not path.startswith("assets/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 if _FRONTEND_DIST.is_dir():

@@ -444,7 +444,12 @@ near-black `--ink`, olive `--accent`).
   back to gradient placeholders and disables "Save winner".
 - **PWA:** `public/manifest.webmanifest` + `public/sw.js` (offline app shell;
   **never caches `/rank`**). Add-to-Home-Screen prompt fires after the first
-  successful ranking (`src/usePwaInstall.js`).
+  successful ranking (`src/usePwaInstall.js`). The API sends the shell
+  (everything outside `assets/`) with `Cache-Control: no-cache`, so a deploy
+  reaches an installed PWA on its next launch (`api/main.py:_SpaStaticFiles`).
+- **Deploy (the Pi):** this checkout is the live service and `frontend/dist` is
+  served straight from disk, so rebuilding `dist` deploys the frontend at once.
+  Build into another `--outDir` to test a branch; rebuild `dist` only from `main`.
 
 **Run:** `cd frontend && npm install && npm run dev` (or `npm run build`).
 Override the API with `VITE_API_BASE` (default `https://photorank.job-joseph.com`).
