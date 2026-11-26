@@ -247,6 +247,12 @@ are equal.
 
 ---
 
+**Discovery:** A wrong cause, declared without reproducing, let the real bug survive for five months. On 2026-06-21, commit `910cceb` saw previews showing as placeholders in browser Chrome and blamed the service worker, saying it intercepted `blob:` URLs. It added a bypass for them. But a service worker never sees `blob:` requests, so the change could not have fixed anything. The real cause was the server renaming `photo_id` (entry above), and it stayed broken until 2026-11-27. Nobody had uploaded the file names the failing device produces: desktop and iPhone names were already lower-case `.jpg`, so every test passed. The bug reproduced at the first attempt once the upload used Android-style names (`.JPG`, no extension) in headless Chromium with Android emulation.
+**Impact:** Before declaring a cause, reproduce the bug under the target device's conditions: its browser, its file names and formats, and its flow. Then show that the fix makes the reproduction pass. A fix with no failing reproduction behind it is a guess. Every phone-reported bug now gets a test that fails on the old code (`tests/test_results_photos_e2e.py` drives headless Chromium on an emulated Android phone).
+**Date:** 2026-11-27
+
+---
+
 **Discovery:** Burst mode never triggered from the app. Two faults each blocked it on their own. (1) The API read `DateTimeOriginal` (0x9003) from IFD0, but phones write it in the Exif sub-IFD (0x8769), so even original uploads had no time. Every test photo in `input/` has it only there. (2) The PWA re-encodes every photo through `<canvas>` before upload, which strips all EXIF, so the server had nothing to read anyway. With a time missing, detection falls back to set mode, so every 4-photo burst from the app ran set mode, with Gemini, since Phase 3.
 **Impact:** The PWA now reads each original's `DateTimeOriginal` on the phone before compressing. `src/lib/captureTime.js` reads only the first 128 KB of a JPEG and only that one tag, and never follows the GPS pointer. It sends the times as a `capture_times` field keyed by upload name (SPECS §6.1). The server uses the sent time, else the file's own EXIF, now read from the Exif IFD by `core/group.py:read_capture_time`. HEIC originals still send no time and run set mode. Tests: `tests/test_capture_time.py` covers the phone reader in both byte orders, plus a GPS pointer it must never follow. The API and browser tests check that 4 photos within 10 s run burst mode with no Gemini call.
 **Date:** 2026-11-27

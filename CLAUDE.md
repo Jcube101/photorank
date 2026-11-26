@@ -456,6 +456,8 @@ near-black `--ink`, olive `--accent`).
 - **Deploy (the Pi):** this checkout is the live service and `frontend/dist` is
   served straight from disk, so rebuilding `dist` deploys the frontend at once.
   Build into another `--outDir` to test a branch; rebuild `dist` only from `main`.
+  Work on a branch in a separate `git worktree` so this checkout stays on `main`.
+  See "Merging and Deploying" below.
 
 **Run:** `cd frontend && npm install && npm run dev` (or `npm run build`).
 Override the API with `VITE_API_BASE` (default `https://photorank.job-joseph.com`).
@@ -493,6 +495,37 @@ These cannot be relaxed for any reason:
 5. **Test with real photos.** Synthetic data does not validate scoring quality.
 6. **Update LEARNINGS.md** when real-photo testing reveals something unexpected.
 7. **Update this file** when architectural decisions change.
+
+---
+
+## Merging and Deploying
+
+Claude Code may merge its own PRs to `main` and deploy them to the Pi when all
+tests and lint pass. There is no CI, so run them on the branch first:
+`PYTHONPATH=. ./venv/bin/pytest -q` and the `ruff check` line in "How to Run".
+
+**Stop and ask the owner before merging anything that:**
+- changes how photos or personal data are stored, logged or deleted;
+- touches `.env` or any secret;
+- can't be undone.
+
+**Deploy.** The checkout at `~/projects/photorank` is the live service
+(`photorank.service`, port 8007), so it must stay on `main`.
+1. Tag the `main` that is live now, so a rollback is one command:
+   `git tag pre-pr-<number> && git push origin pre-pr-<number>`
+2. Merge the PR, then `git pull --ff-only`.
+3. `cd frontend && npm ci && npm run build` (this rebuilds `frontend/dist`, which is live at once).
+4. `sudo systemctl restart photorank.service`
+5. Check `curl -s http://127.0.0.1:8007/health` reports `"status":"ok"`, then
+   smoke-test what changed against `127.0.0.1:8007`.
+
+**Rollback (one command):**
+```bash
+cd ~/projects/photorank && git checkout pre-pr-<number> && (cd frontend && npm ci && npm run build) && sudo systemctl restart photorank.service
+```
+`git checkout main` with the same build and restart rolls forward again.
+
+**Always end by telling the owner exactly what to check on their phone.**
 
 ---
 
