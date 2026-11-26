@@ -32,11 +32,12 @@
     { "set": 27, "first": "DSC00131", "last": "DSC00143", "pick": "DSC00135" },
     { "set": 28, "first": "DSC00144", "last": "DSC00148", "pick": "DSC00147" },
     { "set": 29, "first": "DSC00149", "last": "DSC00155", "pick": "DSC00152" },
-    { "set": 30, "first": "DSC00156", "last": "DSC00167", "pick": "DSC00165" },
-    { "set": 31, "first": "DSC00168", "last": "DSC00171", "pick": "DSC00170" },
-    { "set": 32, "first": "DSC00172", "last": "DSC00174", "pick": "DSC00173" },
-    { "set": 33, "first": "DSC00175", "last": "DSC00180", "pick": "DSC00179" },
-    { "set": 34, "first": "DSC00181", "last": "DSC00183", "pick": "DSC00182" },
-    { "set": 35, "first": "DSC00184", "last": "DSC00190", "pick": "DSC00188" }
+    { "set": 30, "first": "DSC00156", "last": "DSC00160", "pick": "DSC00158" },
+    { "set": 31, "first": "DSC00161", "last": "DSC00167", "pick": "DSC00165" },
+    { "set": 32, "first": "DSC00168", "last": "DSC00171", "pick": "DSC00170" },
+    { "set": 33, "first": "DSC00172", "last": "DSC00174", "pick": "DSC00173" },
+    { "set": 34, "first": "DSC00175", "last": "DSC00180", "pick": "DSC00179" },
+    { "set": 35, "first": "DSC00181", "last": "DSC00183", "pick": "DSC00182" },
+    { "set": 36, "first": "DSC00184", "last": "DSC00190", "pick": "DSC00188" }
   ]
 }
