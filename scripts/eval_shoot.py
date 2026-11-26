@@ -481,6 +481,8 @@ def score_sets(
 def renormalised(axes: list[str]) -> dict[str, float]:
     """SHOOT_WEIGHTS restricted to some axes and rescaled to sum to 1."""
     total = sum(SHOOT_WEIGHTS[a] for a in axes)
+    if total == 0:        # every chosen axis is weighted 0: weigh them equally
+        return {a: (1 / len(axes) if a in axes else 0.0) for a in SHOOT_AXES}
     return {a: (SHOOT_WEIGHTS[a] / total if a in axes else 0.0) for a in SHOOT_AXES}
 
 
@@ -492,8 +494,15 @@ def _weights(**nonzero: float) -> dict[str, float]:
 # sensible points instead of the sweep's single best: with ~30 sets one set is
 # about 3 points, less than Gemini's run-to-run range, so prefer the simplest
 # candidate that is within range of the best on both top-1 and top-3.
-WEIGHT_CANDIDATES: list[dict[str, float]] = [
+# The plan's initial guess (V2-PLAN §6.3), the default until 2026-11-26.
+PREVIOUS_SHOOT_WEIGHTS = _weights(
+    face_sharpness=0.3, expression=0.3, subject_focus=0.1, composition=0.1,
+    camera_engagement=0.1, exposure=0.05, sharpness=0.05,
+)
+
+_CANDIDATES: list[dict[str, float]] = [
     dict(SHOOT_WEIGHTS),
+    PREVIOUS_SHOOT_WEIGHTS,
     _weights(face_sharpness=0.1, expression=0.3, composition=0.3, subject_focus=0.3),
     _weights(face_sharpness=0.1, expression=0.3, camera_engagement=0.2, composition=0.2,
              subject_focus=0.2),
@@ -504,6 +513,10 @@ WEIGHT_CANDIDATES: list[dict[str, float]] = [
     _weights(expression=0.25, camera_engagement=0.25, composition=0.25, subject_focus=0.25),
     _weights(expression=0.4, composition=0.3, subject_focus=0.3),
     _weights(expression=1.0),
+]
+# Current weights first, then the rest without duplicates.
+WEIGHT_CANDIDATES: list[dict[str, float]] = [
+    w for i, w in enumerate(_CANDIDATES) if w not in _CANDIDATES[:i]
 ]
 
 
@@ -905,8 +918,8 @@ def report_oracle(lines, input_dir, truth_sets, cache, runs, spreads, step, cach
               f"Random top-1 baseline: {baseline:.0%}. A difference only counts if it is "
               "larger than the min–max range."), ""]
     lines += _table(["Weights", "Forced spread", "Top-1", "Top-3", "MRR", "Lenient top-1"], rows)
-    lines += [("\"Gemini axes only\" is the four Gemini axes of SHOOT_WEIGHTS rescaled to sum "
-              "to 1."), ""]
+    lines += [("\"Gemini axes only\" is the Gemini-scored axes of SHOOT_WEIGHTS rescaled to "
+              "sum to 1; \"face_sharpness only\" uses that axis alone."), ""]
 
     report_weight_candidates(lines, truth_sets, scored[spreads[0]], spreads[0])
 
@@ -1025,6 +1038,8 @@ def report_weight_candidates(lines, truth_sets, per_run, spread) -> None:
         label = _describe_weights(r["weights"])
         if r["weights"] == SHOOT_WEIGHTS:
             label = f"current SHOOT_WEIGHTS: {label}"
+        elif r["weights"] == PREVIOUS_SHOOT_WEIGHTS:
+            label = f"previous default (plan's initial guess): {label}"
         rows.append([label, r["axes"], _mean_range(r["top1"]), _mean_range(r["top3"]),
                      f"{r['mrr']:.2f}", "yes" if r["within_range"] else ""])
     rr = c["relative_rank"]
@@ -1070,8 +1085,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Score cache file (default: output/eval_<shoot>_scores.json)")
     parser.add_argument("--runs", type=int, default=3,
                         help="Oracle scoring runs, to measure Gemini's run-to-run range (default 3)")
-    parser.add_argument("--spread", default="both", choices=["on", "off", "both"],
-                        help="Forced-spread prompt variants to score (default both; Q6)")
+    parser.add_argument("--spread", default="off", choices=["on", "off", "both"],
+                        help=("Forced-spread prompt variants to score (default off, the "
+                              "shoot-mode default since Q6; 'both' compares them)"))
     parser.add_argument("--step", type=float, default=0.10,
                         help="Weight sweep grid step (default 0.10; 0.05 is ~888k candidates)")
     parser.add_argument("--no-sweep", action="store_true", help="Skip the threshold sweep")
@@ -1097,7 +1113,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     measured = measure_pairs(ordered)
-    spreads  = {"on": [True], "off": [False], "both": [True, False]}[args.spread]
+    # The first variant is the one the sweep, candidates, diagnostics and e2e use.
+    spreads  = {"on": [True], "off": [False], "both": [False, True]}[args.spread]
     sources  = sorted({f["time_source"] for f in ordered})
 
     lines = [

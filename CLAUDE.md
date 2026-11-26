@@ -151,9 +151,9 @@ For one long, ordered shoot (100–300 photos). Two steps:
    position), never filenames, and a reply naming the wrong photos is retried
    (`strict_ids`); see LEARNINGS 2026-11-26.
 
-The set-mode Gemini prompt is unchanged and pinned by a hash test. The
-forced-spread rule can be switched off in shoot mode only (`--no-force-spread`),
-for the Q6 evaluation.
+The set-mode Gemini prompt is unchanged and pinned by a hash test. Forced
+spread is **off** in shoot mode by default (Q6, decided 2026-11-26); set mode
+always uses it. `--force-spread` adds it back in shoot mode.
 
 ---
 

@@ -60,14 +60,17 @@ SHOOT_AXES = [
     "camera_engagement", "exposure", "sharpness", "face_exposure",
 ]
 
+# Chosen 2026-11-26 from the Wat Arun evaluation (V2-PLAN §6.3): the simplest
+# round set within Gemini's run-to-run range of the best. Zero-weight axes are
+# still scored and returned for transparency; the UI hides them.
 SHOOT_WEIGHTS: dict[str, float] = {
-    "face_sharpness":    0.30,
+    "face_sharpness":    0.10,
     "expression":        0.30,
-    "subject_focus":     0.10,
-    "composition":       0.10,
-    "camera_engagement": 0.10,
-    "exposure":          0.05,
-    "sharpness":         0.05,
+    "subject_focus":     0.30,
+    "composition":       0.30,
+    "camera_engagement": 0.00,
+    "exposure":          0.00,
+    "sharpness":         0.00,
     "face_exposure":     0.00,
 }
 

@@ -59,15 +59,15 @@ import cv2
 import numpy as np
 from PIL import Image
 
-GROUPING_VERSION = "1"
+GROUPING_VERSION = "2"
 
 THRESHOLDS: dict = {
-    "T_SOFT":    20,      # s. Below this, frames are presumed same-set.
+    "T_SOFT":    15,      # s. Below this, frames are presumed same-set.
     "T_HARD":    90,      # s. At or above this, presumed a new set.
     "H_SAME":    6,       # dHash distance for near-identical framing.
     "C_SAME":    0.08,    # histogram distance for the same scene colours.
-    "H_LOW":     14,      # moderate structural change.
-    "C_LOW":     0.20,    # moderate colour change.
+    "H_LOW":     10,      # moderate structural change.
+    "C_LOW":     0.15,    # moderate colour change.
     "H_HIGH":    24,      # strong structural change.
     "C_HIGH":    0.35,    # strong colour change.
     "MIN_GROUP": 2,       # groups smaller than this are merged into a neighbour.

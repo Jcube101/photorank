@@ -41,15 +41,16 @@ _GEMINI_FIELDS = (
 _LABEL = re.compile(r"\bphoto_\d+\b")
 
 
-def score_group(photos: list[dict], force_spread: bool = True) -> dict:
+def score_group(photos: list[dict], force_spread: bool = False) -> dict:
     """
     Score one group with both signal families. No weights are applied.
 
     Args:
         photos:       [{"photo_id", "path"}, ...] in shooting order. `path` is
                       the compressed copy from ingest().
-        force_spread: keep Gemini's forced score-spread rule. Ignored for a
-                      one-photo group, where the rule cannot be satisfied.
+        force_spread: add Gemini's forced score-spread rule. Off by default in
+                      shoot mode (V2-PLAN Q6). Ignored for a one-photo group,
+                      where the rule cannot be satisfied.
 
     Returns:
         {"photos": [raw per-photo scores], "gemini_latency_s": float}
@@ -151,7 +152,7 @@ def group_result(group_id: str, ranked: list[dict]) -> dict:
 
 def run_shoot(
     photos: list[dict],
-    force_spread: bool = True,
+    force_spread: bool = False,
     thresholds: dict | None = None,
     weights: dict[str, float] | None = None,
 ) -> dict:

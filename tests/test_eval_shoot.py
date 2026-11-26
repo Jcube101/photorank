@@ -342,3 +342,11 @@ def test_weight_candidates_prefer_the_simplest_within_range(monkeypatch):
     assert [r["within_range"] for r in c["rows"]] == [True, False, False]
     assert c["simplest"]["weights"] == ev.WEIGHT_CANDIDATES[0]
     assert c["relative_rank"]["top1"] == [1.0, 1.0]           # rr=1 is always the pick here
+
+
+def test_weight_candidates_start_with_the_current_weights_without_duplicates():
+    assert ev.WEIGHT_CANDIDATES[0] == SHOOT_WEIGHTS
+    assert ev.PREVIOUS_SHOOT_WEIGHTS in ev.WEIGHT_CANDIDATES
+    assert all(ev.WEIGHT_CANDIDATES.count(w) == 1 for w in ev.WEIGHT_CANDIDATES)
+    for w in ev.WEIGHT_CANDIDATES:
+        assert sum(w.values()) == pytest.approx(1.0)

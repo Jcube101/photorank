@@ -45,13 +45,13 @@ FIXTURE = json.loads(
         (90,    6,  0.08, False, None,            "2"),   # both exactly at SAME
         (3600,  0,  0.00, False, None,            "2"),
         # Rule 3: medium pause, some change on EITHER signal.
-        (20,    14, 0.00, True,  "time+visual",   "3"),   # dt == T_SOFT, dh == H_LOW
-        (89.9,  0,  0.20, True,  "time+visual",   "3"),   # dc == C_LOW
+        (15,    10, 0.00, True,  "time+visual",   "3"),   # dt == T_SOFT, dh == H_LOW
+        (89.9,  0,  0.15, True,  "time+visual",   "3"),   # dc == C_LOW
         (50,    30, 0.50, True,  "time+visual",   "3"),
         # Rule 5 in the medium band: both below LOW.
-        (50,    13, 0.19, False, None,            "5"),
+        (50,    9,  0.14, False, None,            "5"),
         # Rule 4: quick follow-up, strong change on BOTH.
-        (19.9,  24, 0.35, True,  "visual_change", "4"),   # both exactly at HIGH
+        (14.9,  24, 0.35, True,  "visual_change", "4"),   # both exactly at HIGH
         (0,     64, 1.00, True,  "visual_change", "4"),
         # Rule 5 in the fast band: one strong signal is not enough.
         (5,     24, 0.34, False, None,            "5"),
@@ -78,7 +78,7 @@ def test_fast_rule_combinator(fast_rule, dh, dc, boundary):
 
 def test_fast_rule_only_affects_quick_follow_ups():
     th = resolve_thresholds({"FAST_RULE": "or"})
-    assert decide_pair(50, 13, 0.19, th) == decide_pair(50, 13, 0.19)
+    assert decide_pair(50, 9, 0.14, th) == decide_pair(50, 9, 0.14)
     assert decide_pair(200, 3, 0.02, th) == decide_pair(200, 3, 0.02)
 
 
@@ -86,9 +86,9 @@ def test_fast_rule_only_affects_quick_follow_ups():
     ("dt", "dh", "dc", "expected"),
     [
         # No time: visual_only needs BOTH at LOW or above.
-        (None, 14, 0.20, (True,  "visual_only", "visual_only")),
-        (None, 13, 0.90, (False, None,          "visual_only")),
-        (None, 60, 0.19, (False, None,          "visual_only")),
+        (None, 10, 0.15, (True,  "visual_only", "visual_only")),
+        (None, 9,  0.90, (False, None,          "visual_only")),
+        (None, 60, 0.14, (False, None,          "visual_only")),
         # No fingerprint: time alone, T_HARD only.
         (90,   None, None, (True,  "time_gap", "time_only")),
         (89,   None, None, (False, None,       "time_only")),
@@ -258,7 +258,7 @@ def test_adaptive_history_counts_only_same_set_pairs():
     steps = [(2, 3, 0.03), (2, 3, 0.03), (60, 30, 0.4), (60, 30, 0.4), (2, 3, 0.03),
              (9, 20, 0.05), (2, 3, 0.03)]
     result = group_measured(_ids(len(steps) + 1), _measured(steps), {**ADAPTIVE, "MIN_GROUP": 1})
-    assert [p["t_pause"] for p in result["pairs"]] == [20, 8, 8, 8, 8, 8, 8]
+    assert [p["t_pause"] for p in result["pairs"]] == [THRESHOLDS["T_SOFT"], 8, 8, 8, 8, 8, 8]
     assert [p["boundary"] for p in result["pairs"]] == [False, False, True, True, False, True, False]
 
 
