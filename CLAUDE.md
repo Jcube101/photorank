@@ -214,6 +214,8 @@ photorank/
     │   ├── usePwaInstall.js       ← Add-to-Home-Screen prompt (after 1st success)
     │   ├── lib/breakdown.js      ← normalizes API score_breakdown → bar rows (hides 0-weight axes)
     │   ├── lib/rerank.js         ← client-side profile re-rank (mirrors rank_photos)
+    │   ├── lib/uploadNames.js    ← unique upload names (the server echoes them as photo_id)
+    │   ├── lib/captureTime.js    ← EXIF DateTimeOriginal from the original file (burst detection)
     │   ├── screens/              ← UploadScreen, LoadingScreen, ResultsScreen
     │   └── components/           ← HeroCard, RankCard, AxisBar, MessageScreen
     └── _design/                  ← archived Claude Design reference (NOT production)
@@ -420,7 +422,11 @@ near-black `--ink`, olive `--accent`).
   on every switch); only the "Reset to <run profile>" link appears, and it does
   not change the row height. `PROFILE_WEIGHTS` in `src/config.js` mirrors
   `core/profiles.py` — keep them in sync. Hidden for burst-mode results.
-- **Mode is omitted from the request** so the server auto-detects (EXIF).
+- **Mode is omitted from the request** so the server auto-detects. Compression
+  strips EXIF, so before compressing, `src/lib/captureTime.js` reads each
+  original's `DateTimeOriginal` (first 128 KB, JPEG only, that one tag, never
+  GPS) and the times go up as the `capture_times` field, keyed by upload name.
+  Without it, burst mode could never trigger from the app (LEARNINGS 2026-11-27).
 - **Client-side compression** (`src/compress.js`) downscales to ~1.5 MP and
   re-encodes JPEG; this both shrinks the upload and yields a browser-renderable
   preview (HEIC otherwise won't display). Each file is uploaded under its exact
@@ -469,6 +475,10 @@ These cannot be relaxed for any reason:
    (Phase 2 responsibility — not yet implemented.)
 5. **Training consent is explicit.** If v2 ever collects data for training, it
    must be behind an explicit opt-in. Never assumed from usage.
+6. **Only the capture time leaves the phone from EXIF.** The PWA sends each
+   photo's `DateTimeOriginal` (`capture_times`) for burst detection and no other
+   EXIF tag, never GPS; the uploaded pixels carry no EXIF (canvas re-encode).
+   The server never logs, returns or stores capture times.
 
 ---
 
@@ -512,7 +522,9 @@ These cannot be relaxed for any reason:
 - `scripts/label_shoot.py` — labelling page builder; page logic in `scripts/labeller/core.js`, whose `validateKey()` mirrors `eval_shoot.py:resolve_key()` (tests check both agree)
 - `api/main.py:rank_endpoint()` — FastAPI POST /rank handler; saves uploads, auto-detects mode, calls ingest → score → rank, cleans up
 - `api/main.py:_photo_ids()` — photo_id per upload: the filename exactly as sent; only a missing or repeated name changes
-- `api/main.py:_auto_detect_mode()` — reads EXIF DateTimeOriginal from raw uploads; returns 'burst' if ≤6 files within 10s, else 'set'
+- `api/main.py:_auto_detect_mode()` — 'burst' if ≤6 photos all have capture times within 10 s, else 'set'; each time comes from the `capture_times` field, else the file's EXIF (Exif IFD, via `core/group.py:read_capture_time`)
+- `api/main.py:_sent_capture_times()` — parses the PWA's `capture_times` field; anything malformed is ignored (→ set mode)
+- `frontend/src/lib/captureTime.js:readCaptureTime()` — DateTimeOriginal from the first 128 KB of an original JPEG; reads no other tag
 - `api/main.py:_run_burst()` — burst scoring sub-routine (called after EXIF stripping by ingest)
 - `api/main.py:_run_set()` — set mode scoring sub-routine (deterministic → Gemini → merge → rank)
 

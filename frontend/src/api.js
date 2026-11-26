@@ -47,10 +47,13 @@ function messageForStatus(status) {
  * @param {string} profile   family | portrait | travel | event
  * @param {object} [opts]
  * @param {AbortSignal} [opts.signal]  Abort the request (e.g. user cancels).
+ * @param {Object<string,string>} [opts.captureTimes]  Upload name → EXIF
+ *   DateTimeOriginal ("YYYY:MM:DD HH:MM:SS"), read before compression. Sent as
+ *   the `capture_times` field; photos without a time are left out.
  * @returns {Promise<object>} The ranker JSON (top-level output, SPECS §5.4).
  *
  * `mode` is intentionally omitted so the server auto-detects burst vs set
- * from EXIF timestamps (SPECS §0).
+ * from the capture times (SPECS §0).
  */
 export async function rankPhotos(files, profile, opts = {}) {
   if (!navigator.onLine) {
@@ -63,6 +66,10 @@ export async function rankPhotos(files, profile, opts = {}) {
   const form = new FormData();
   for (const f of files) form.append("files", f, f.name);
   form.append("profile", profile);
+  const times = opts.captureTimes ?? {};
+  if (Object.keys(times).length > 0) {
+    form.append("capture_times", JSON.stringify(times));
+  }
 
   let res;
   try {

@@ -25,6 +25,14 @@ const page = await (await browser.newContext({ ...devices["Pixel 7"] })).newPage
 const errors = [];
 page.on("pageerror", (err) => errors.push(err.message));
 
+// The mode the server chose (burst or set), from the /rank response.
+let mode = null;
+page.on("response", async (res) => {
+  if (res.request().method() === "POST" && new URL(res.url()).pathname === "/rank") {
+    mode = await res.json().then((j) => j.mode, () => `status ${res.status()}`);
+  }
+});
+
 // Each result card: its photo_id and what it shows (the photo with its pixel
 // width, or the gradient placeholder).
 async function readResults() {
@@ -79,5 +87,5 @@ if (await page.locator(".rerank").count()) {
 await page.reload();
 const restored = await readResults();
 
-console.log(JSON.stringify({ fresh, switcher, restored, errors }));
+console.log(JSON.stringify({ mode, fresh, switcher, restored, errors }));
 await browser.close();

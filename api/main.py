@@ -14,7 +14,7 @@ import os
 import shutil
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +27,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 load_dotenv()
 
+from core.group import read_capture_time
 from core.ingest import cleanup, ingest
 from core.profiles import BURST_WEIGHTS, PROFILES, validate_weights
 from core.rank import _merge, _rank_burst, rank_photos
@@ -39,8 +40,8 @@ _BURST_MAX_PHOTOS         = 6
 _BURST_TIMESTAMP_WINDOW_S = 10
 _VALID_PROFILES           = set(PROFILES.keys()) | {"custom"}
 
-# EXIF tag ID for DateTimeOriginal (0x9003)
-_EXIF_DATETIME_ORIGINAL = 36867
+# EXIF DateTimeOriginal, as the PWA sends it in `capture_times`
+_EXIF_TIME_FORMAT = "%Y:%m:%d %H:%M:%S"
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("photorank.api")
@@ -89,40 +90,63 @@ def health() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# EXIF timestamp reading (burst auto-detection, runs before EXIF is stripped)
+# Capture times (burst auto-detection)
 # ---------------------------------------------------------------------------
+# The PWA re-encodes every photo before upload, which strips all EXIF, so it
+# reads each photo's DateTimeOriginal on the phone first and sends it in the
+# `capture_times` field: {photo_id: "YYYY:MM:DD HH:MM:SS"}. Uploads of original
+# files (curl, scripts) still carry EXIF, so a photo without a sent time falls
+# back to its own DateTimeOriginal. Capture times are only compared here: they
+# are never logged, returned or stored.
 
-def _read_exif_timestamp(path: Path) -> Optional[datetime]:
-    """
-    Read DateTimeOriginal from raw uploaded file before it is stripped by ingest.
-    Returns None if Pillow is unavailable, EXIF is absent, or parsing fails.
-    Never logs file content.
-    """
+def _sent_capture_times(raw: Optional[str]) -> dict[str, str]:
+    """The capture_times field as {photo_id: time}. Anything malformed is ignored."""
+    if not raw:
+        return {}
     try:
-        from PIL import Image
-        with Image.open(path) as img:
-            exif = img.getexif()
-        raw = exif.get(_EXIF_DATETIME_ORIGINAL)
-        if raw:
-            return datetime.strptime(raw, "%Y:%m:%d %H:%M:%S")
-    except Exception:
-        pass
-    return None
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
 
 
-def _auto_detect_mode(upload_paths: list[Path]) -> str:
+def _parse_capture_time(value: Optional[str]) -> Optional[int]:
+    """'YYYY:MM:DD HH:MM:SS' (EXIF DateTimeOriginal) as epoch ms, or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.strptime(value, _EXIF_TIME_FORMAT)
+    except ValueError:
+        return None
+    return int(dt.replace(tzinfo=UTC).timestamp()) * 1000
+
+
+def _capture_time_ms(path: Path, photo_id: str, sent: dict[str, str]) -> Optional[int]:
+    """The client-sent time for this photo, else its own EXIF DateTimeOriginal."""
+    ms = _parse_capture_time(sent.get(photo_id))
+    if ms is None:
+        try:
+            ms, _source = read_capture_time(path)  # reads the Exif IFD, not IFD0
+        except Exception:  # e.g. Pillow's DecompressionBombError on a 200 MP original
+            ms = None      # no usable time: set mode, never a 500
+    return ms
+
+
+def _auto_detect_mode(uploads: list[tuple[Path, str]], sent: dict[str, str]) -> str:
     """
-    Return 'burst' when <=6 files all have timestamps within 10 s of each other.
-    Falls back to 'set' if count exceeds limit or any timestamp is unreadable.
+    Return 'burst' when <=6 photos all have capture times within 10 s of each
+    other. Falls back to 'set' if there are more photos or any time is missing.
+    `uploads` is [(path on disk, photo_id)]; `sent` is from _sent_capture_times.
     """
-    if len(upload_paths) > _BURST_MAX_PHOTOS:
+    if len(uploads) > _BURST_MAX_PHOTOS:
         return "set"
-    timestamps = [_read_exif_timestamp(p) for p in upload_paths]
-    if any(ts is None for ts in timestamps):
+    times = [_capture_time_ms(path, photo_id, sent) for path, photo_id in uploads]
+    if any(t is None for t in times):
         return "set"
-    ts_sorted = sorted(timestamps)  # type: ignore[type-var]
-    span = (ts_sorted[-1] - ts_sorted[0]).total_seconds()
-    return "burst" if span <= _BURST_TIMESTAMP_WINDOW_S else "set"
+    span_ms = max(times) - min(times)  # type: ignore[type-var]
+    return "burst" if span_ms <= _BURST_TIMESTAMP_WINDOW_S * 1000 else "set"
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +187,7 @@ async def rank_endpoint(
     profile: str = Form("family"),
     mode: Optional[str] = Form(None),
     weights: Optional[str] = Form(None),
+    capture_times: Optional[str] = Form(None),
 ) -> JSONResponse:
     # --- Input validation ---
     _t_req = time.perf_counter()
@@ -215,8 +240,10 @@ async def rank_endpoint(
         upload_paths   = [info[0] for info in upload_info]
         uuid_to_display = {p.name: name for p, name in upload_info}
 
-        # --- Mode resolution (reads raw EXIF before ingest strips it) ---
-        resolved_mode = mode if mode is not None else _auto_detect_mode(upload_paths)
+        # --- Mode resolution (sent capture times, else raw EXIF before ingest strips it) ---
+        resolved_mode = mode if mode is not None else _auto_detect_mode(
+            upload_info, _sent_capture_times(capture_times),
+        )
         logger.info("/rank resolved mode=%s for %d file(s)", resolved_mode, len(upload_paths))
 
         # --- Ingest: cv2.imread + cv2.imwrite strips EXIF automatically ---

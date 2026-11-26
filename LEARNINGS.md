@@ -247,4 +247,10 @@ are equal.
 
 ---
 
+**Discovery:** Burst mode never triggered from the app. Two faults each blocked it on their own. (1) The API read `DateTimeOriginal` (0x9003) from IFD0, but phones write it in the Exif sub-IFD (0x8769), so even original uploads had no time. Every test photo in `input/` has it only there. (2) The PWA re-encodes every photo through `<canvas>` before upload, which strips all EXIF, so the server had nothing to read anyway. With a time missing, detection falls back to set mode, so every 4-photo burst from the app ran set mode, with Gemini, since Phase 3.
+**Impact:** The PWA now reads each original's `DateTimeOriginal` on the phone before compressing. `src/lib/captureTime.js` reads only the first 128 KB of a JPEG and only that one tag, and never follows the GPS pointer. It sends the times as a `capture_times` field keyed by upload name (SPECS §6.1). The server uses the sent time, else the file's own EXIF, now read from the Exif IFD by `core/group.py:read_capture_time`. HEIC originals still send no time and run set mode. Tests: `tests/test_capture_time.py` covers the phone reader in both byte orders, plus a GPS pointer it must never follow. The API and browser tests check that 4 photos within 10 s run burst mode with no Gemini call.
+**Date:** 2026-11-27
+
+---
+
 *Add new entries above this line as discoveries are made.*

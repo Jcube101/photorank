@@ -154,8 +154,10 @@ curl -X POST http://localhost:8007/rank \
 
 The upload field is `files` (2–20 images). The `mode` parameter is optional:
 when omitted, the API auto-detects burst mode if ≤6 photos all have EXIF
-timestamps within 10 seconds of each other; otherwise it uses set mode. Pass
-`mode=burst` or `mode=set` to override.
+capture times (`DateTimeOriginal`) within 10 seconds of each other; otherwise it
+uses set mode. Pass `mode=burst` or `mode=set` to override. The PWA compresses
+photos (which strips EXIF), so it reads each capture time on the phone and sends
+it in a `capture_times` field (see SPECS §6.1).
 
 ### Frontend PWA (Phase 3)
 
