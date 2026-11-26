@@ -10,12 +10,7 @@
 import { useMemo, useState } from "react";
 import HeroCard from "../components/HeroCard.jsx";
 import RankCard from "../components/RankCard.jsx";
-import {
-  PROFILES,
-  PROFILE_WEIGHTS,
-  PROFILE_HINTED,
-  profileName,
-} from "../config.js";
+import { PROFILES, PROFILE_WEIGHTS, profileName } from "../config.js";
 import { rerankByProfile } from "../lib/rerank.js";
 
 export default function ResultsScreen({ result, previews, onRestart }) {
@@ -37,13 +32,6 @@ export default function ResultsScreen({ result, previews, onRestart }) {
 
   const profLabel = profileName(canSwitch ? viewProfile : result.profile);
   const totalPhotos = result.total_photos ?? ranked.length;
-
-  // Travel is the only profile whose Gemini scoring differs; re-ranking into it
-  // from a non-travel run is directional, not identical.
-  const approximate =
-    canSwitch &&
-    viewProfile !== result.profile &&
-    PROFILE_HINTED.has(viewProfile);
 
   const [openId, setOpenId] = useState(rest[0]?.photo_id ?? null);
   const [scrolled, setScrolled] = useState(false);
@@ -128,12 +116,6 @@ export default function ResultsScreen({ result, previews, onRestart }) {
                   </button>
                 ))}
               </div>
-              {approximate && (
-                <div className="rerank-note">
-                  Re-ranked from this set's scores. Travel judges backgrounds
-                  differently — for an exact result, run a new batch on Travel.
-                </div>
-              )}
             </div>
           )}
 

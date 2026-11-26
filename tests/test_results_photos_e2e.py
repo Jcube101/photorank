@@ -135,3 +135,12 @@ def test_fresh_result_shows_each_photo_and_restored_shows_placeholders(
     assert {c["shows"] for c in restored["cards"]} == {"placeholder"}
     assert not restored["saveEnabled"]
 
+
+def test_switching_profile_does_not_shift_the_layout(site, tmp_path, monkeypatch):
+    switcher = _drive(site, tmp_path, monkeypatch, "set")["switcher"]
+    assert switcher is not None
+    assert set(switcher["heroTop"]) == {"Family", "Portrait", "Travel", "Event"}
+    assert len(set(switcher["heroTop"].values())) == 1, switcher["heroTop"]
+    assert switcher["notes"] == 0
+    # "Reset to Family" stays, for every profile but the run's own.
+    assert switcher["reset"] == {"Family": False, "Portrait": True, "Travel": True, "Event": True}

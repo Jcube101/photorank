@@ -415,8 +415,10 @@ near-black `--ink`, olive `--accent`).
   re-weight — no re-upload, no Gemini call. Mirrors `core/rank.py:rank_photos`
   exactly (weighted sum, round-to-3, `(final_score desc, relative_rank)` tie-
   break). `family`/`portrait`/`event` are identical to a real run; `travel`
-  is directional only (its Gemini hint isn't reflected in pre-scored raws) and
-  shows an "approximate" note. `PROFILE_WEIGHTS` in `src/config.js` mirrors
+  is directional only (its Gemini hint isn't reflected in pre-scored raws).
+  No note is shown for any profile (removed 2026-11-27: it shifted the layout
+  on every switch); only the "Reset to <run profile>" link appears, and it does
+  not change the row height. `PROFILE_WEIGHTS` in `src/config.js` mirrors
   `core/profiles.py` — keep them in sync. Hidden for burst-mode results.
 - **Mode is omitted from the request** so the server auto-detects (EXIF).
 - **Client-side compression** (`src/compress.js`) downscales to ~1.5 MP and
