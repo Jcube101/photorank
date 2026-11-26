@@ -84,13 +84,6 @@ export const PROFILE_WEIGHTS = {
   },
 };
 
-// `travel` is the only profile whose Gemini scoring differs (it injects a hint
-// that rewards prominent backgrounds and de-emphasises expression). So
-// re-ranking INTO travel from a non-travel run is directional, not identical —
-// the weights are right but the raw composition/expression were judged without
-// travel's leniency. We surface this caveat in the UI.
-export const PROFILE_HINTED = new Set(["travel"]);
-
 // Human labels for every axis the API can return, across both modes
 // (set mode: 6 axes; burst mode: face-region axes). Unknown keys fall back
 // to a title-cased label so the breakdown never breaks on a new axis.

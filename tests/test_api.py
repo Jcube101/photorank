@@ -87,3 +87,65 @@ def test_burst_mode_never_calls_gemini(monkeypatch):
     monkeypatch.setattr(api, "compute_burst_scores", burst)
     out = api._run_burst(PHOTOS)
     assert out["mode"] == "burst" and len(out["ranked"]) == 3
+
+
+# --- photo_id is the uploaded filename, unchanged ---------------------------
+# The PWA finds each result's preview by photo_id. Rewriting the name (the old
+# code lower-cased the extension and added ".jpg" when there was none) made
+# every Android result show the placeholder. See LEARNINGS 2026-11-27.
+
+def test_photo_ids_keep_each_name_exactly():
+    names = ["1000330417.JPG", "1000330418", "IMG_1.jpeg", "photo.HEIC", "a.b.Jpg"]
+    assert api._photo_ids(names) == names
+
+
+def test_photo_ids_only_rename_repeats_and_missing_names():
+    assert api._photo_ids(["a.jpg", "a.jpg", "a_1.jpg", "a.jpg"]) == [
+        "a.jpg", "a_1.jpg", "a_1_1.jpg", "a_2.jpg",
+    ]
+    assert api._photo_ids(["1000330417", "1000330417"]) == ["1000330417", "1000330417_1"]
+    assert api._photo_ids([None, ""]) == ["image.jpg", "image_1.jpg"]
+
+
+def _jpeg(seed: int) -> bytes:
+    import cv2
+    import numpy as np
+
+    noise = np.random.default_rng(seed).integers(0, 256, (240, 320, 3), dtype=np.uint8)
+    ok, buf = cv2.imencode(".jpg", noise)
+    assert ok
+    return buf.tobytes()
+
+
+def test_app_shell_is_revalidated_but_hashed_assets_are_not(tmp_path):
+    """An installed PWA must pick up a new build on its next launch."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    (tmp_path / "assets").mkdir()
+    for name in ("index.html", "sw.js", "manifest.webmanifest", "assets/index-abc123.js"):
+        (tmp_path / name).write_text("x")
+    app = FastAPI()
+    app.mount("/", api._SpaStaticFiles(directory=tmp_path, html=True))
+    client = TestClient(app)
+
+    for path in ("/", "/index.html", "/sw.js", "/manifest.webmanifest", "/some/deep/link"):
+        res = client.get(path)
+        assert res.status_code == 200 and res.headers.get("cache-control") == "no-cache", path
+        etag = res.headers["etag"]
+        again = client.get(path, headers={"if-none-match": etag})
+        assert again.status_code in (200, 304) and again.headers.get("cache-control") == "no-cache"
+    assert "cache-control" not in client.get("/assets/index-abc123.js").headers
+
+
+@pytest.mark.parametrize("mode", ["burst", "set"])
+def test_rank_returns_the_uploaded_names_as_photo_ids(monkeypatch, mode):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(api, "score_photos",
+                        lambda paths, photo_ids, profile: _gemini_rows(photo_ids))
+    names = ["1000330417.JPG", "1000330418", "1000330419.jpg"]
+    files = [("files", (n, _jpeg(i), "image/jpeg")) for i, n in enumerate(names)]
+    res = TestClient(api.app).post("/rank", files=files, data={"mode": mode})
+    assert res.status_code == 200, res.text
+    assert sorted(r["photo_id"] for r in res.json()["ranked"]) == sorted(names)

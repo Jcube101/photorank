@@ -8,8 +8,11 @@
 // This mirrors core/rank.py:rank_photos EXACTLY so the on-device ordering
 // matches a real server run: same weighted sum, same round-to-3, same sort key
 // (final_score desc, then relative_rank as the tiebreaker). For family /
-// portrait / event the result is identical to a true run; for travel it is
-// directional only (see PROFILE_HINTED in config.js).
+// portrait / event the result is identical to a true run. For travel it is
+// directional only: travel is the one profile whose Gemini prompt differs (a
+// hint that rewards prominent backgrounds), so re-ranking INTO travel from
+// another profile's run uses raw scores judged without that hint. The UI no
+// longer shows a note for this (it shifted the layout on every switch).
 
 import { ALL_AXES, AXES_DETERMINISTIC } from "../config.js";
 

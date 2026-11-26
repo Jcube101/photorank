@@ -188,7 +188,7 @@ photorank/
 │   ├── label_shoot.py      ← builds a page for correcting proposed sets into an answer key
 │   └── labeller/           ← that page's template, CSS, UI (app.js) and logic (core.js, tested under Node)
 ├── eval/                   ← committed answer keys (filenames only); see eval/README.md
-├── tests/                  ← pytest suite + fixtures/grouping_golden.json
+├── tests/                  ← pytest suite + fixtures/grouping_golden.json + e2e/ (headless-Chromium driver)
 ├── docs/                   ← V2-PLAN.md (design), V2-REVIEW.md (review)
 ├── input/                  ← drop test photos here; contents git-ignored
 ├── output/                 ← ranked results written here; contents git-ignored
@@ -277,7 +277,9 @@ PYTHONPATH=. ./venv/bin/python scripts/eval_shoot.py \
   --input input/wat_arun --key eval/wat_arun/answer_key.json \
   --stage oracle --spread off --cached-only
 
-# Tests and lint (dev tools: pip install -r requirements-dev.txt)
+# Tests and lint (dev tools: pip install -r requirements-dev.txt). The browser
+# test (tests/test_results_photos_e2e.py) also needs `cd frontend && npm install`
+# and Chromium (`npx playwright install chromium`); it skips without them.
 PYTHONPATH=. ./venv/bin/pytest -q
 ./venv/bin/ruff check core/group.py core/shoot.py scripts tests
 ```
@@ -413,15 +415,21 @@ near-black `--ink`, olive `--accent`).
   re-weight — no re-upload, no Gemini call. Mirrors `core/rank.py:rank_photos`
   exactly (weighted sum, round-to-3, `(final_score desc, relative_rank)` tie-
   break). `family`/`portrait`/`event` are identical to a real run; `travel`
-  is directional only (its Gemini hint isn't reflected in pre-scored raws) and
-  shows an "approximate" note. `PROFILE_WEIGHTS` in `src/config.js` mirrors
+  is directional only (its Gemini hint isn't reflected in pre-scored raws).
+  No note is shown for any profile (removed 2026-11-27: it shifted the layout
+  on every switch); only the "Reset to <run profile>" link appears, and it does
+  not change the row height. `PROFILE_WEIGHTS` in `src/config.js` mirrors
   `core/profiles.py` — keep them in sync. Hidden for burst-mode results.
 - **Mode is omitted from the request** so the server auto-detects (EXIF).
 - **Client-side compression** (`src/compress.js`) downscales to ~1.5 MP and
   re-encodes JPEG; this both shrinks the upload and yields a browser-renderable
-  preview (HEIC otherwise won't display). Filename is preserved so the server's
-  `photo_id` maps back to each preview. On decode failure: send the original,
-  fall back to a gradient placeholder.
+  preview (HEIC otherwise won't display). Each file is uploaded under its exact
+  original name (made unique by `src/lib/uploadNames.js`) and the server returns
+  that name unchanged as `photo_id` (`api/main.py:_photo_ids`, SPECS §6.1), which
+  maps each result back to its preview. Never rewrite the name on either side:
+  the server once lower-cased extensions and added `.jpg`, and every Android
+  result showed the placeholder (LEARNINGS 2026-11-27). On decode failure: send
+  the original, fall back to a gradient placeholder.
 - **Errors are mapped to friendly copy** in `src/api.js` (422/500/502 →
   user-facing messages); raw server detail is never shown.
 - **Privacy on the client:** previews are object URLs, revoked on reset. No
@@ -436,7 +444,12 @@ near-black `--ink`, olive `--accent`).
   back to gradient placeholders and disables "Save winner".
 - **PWA:** `public/manifest.webmanifest` + `public/sw.js` (offline app shell;
   **never caches `/rank`**). Add-to-Home-Screen prompt fires after the first
-  successful ranking (`src/usePwaInstall.js`).
+  successful ranking (`src/usePwaInstall.js`). The API sends the shell
+  (everything outside `assets/`) with `Cache-Control: no-cache`, so a deploy
+  reaches an installed PWA on its next launch (`api/main.py:_SpaStaticFiles`).
+- **Deploy (the Pi):** this checkout is the live service and `frontend/dist` is
+  served straight from disk, so rebuilding `dist` deploys the frontend at once.
+  Build into another `--outDir` to test a branch; rebuild `dist` only from `main`.
 
 **Run:** `cd frontend && npm install && npm run dev` (or `npm run build`).
 Override the API with `VITE_API_BASE` (default `https://photorank.job-joseph.com`).
@@ -498,6 +511,7 @@ These cannot be relaxed for any reason:
 - `scripts/eval_shoot.py` — answer-key evaluation harness with a score cache
 - `scripts/label_shoot.py` — labelling page builder; page logic in `scripts/labeller/core.js`, whose `validateKey()` mirrors `eval_shoot.py:resolve_key()` (tests check both agree)
 - `api/main.py:rank_endpoint()` — FastAPI POST /rank handler; saves uploads, auto-detects mode, calls ingest → score → rank, cleans up
+- `api/main.py:_photo_ids()` — photo_id per upload: the filename exactly as sent; only a missing or repeated name changes
 - `api/main.py:_auto_detect_mode()` — reads EXIF DateTimeOriginal from raw uploads; returns 'burst' if ≤6 files within 10s, else 'set'
 - `api/main.py:_run_burst()` — burst scoring sub-routine (called after EXIF stripping by ingest)
 - `api/main.py:_run_set()` — set mode scoring sub-routine (deterministic → Gemini → merge → rank)

@@ -129,6 +129,34 @@ def _auto_detect_mode(upload_paths: list[Path]) -> str:
 # POST /rank
 # ---------------------------------------------------------------------------
 
+def _photo_ids(filenames: list[Optional[str]]) -> list[str]:
+    """
+    The photo_id for each upload: its filename exactly as the client sent it.
+
+    The PWA finds each photo's on-screen preview by this name, so it must come
+    back unchanged: no case folding and no added extension. (Android pickers
+    send names like "1000330417.JPG" or a bare "1000330417"; rewriting them
+    made every result show the placeholder.) Only a missing name or a repeat
+    changes: a repeat gets "_N" before its extension, using the lowest N not
+    already taken in this batch.
+    """
+    used: set[str] = set()
+    ids: list[str] = []
+    for raw in filenames:
+        name = raw or "image.jpg"
+        if name in used:
+            stem, dot, ext = name.rpartition(".")
+            if not stem:  # no extension, or a name like ".hidden"
+                stem, dot, ext = name, "", ""
+            n = 1
+            while f"{stem}_{n}{dot}{ext}" in used:
+                n += 1
+            name = f"{stem}_{n}{dot}{ext}"
+        used.add(name)
+        ids.append(name)
+    return ids
+
+
 @app.post("/rank")
 async def rank_endpoint(
     files: list[UploadFile] = File(...),
@@ -172,22 +200,14 @@ async def rank_endpoint(
     upload_dir = Path(f"/tmp/photorank_{uuid.uuid4().hex}")
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    # (saved_path_on_disk, original_display_name)
+    # (saved_path_on_disk, photo_id)
     upload_info: list[tuple[Path, str]] = []
-    seen_names: dict[str, int] = {}
 
     try:
-        for upload in files:
-            orig     = upload.filename or "image.jpg"
-            stem     = Path(orig).stem
-            suffix   = Path(orig).suffix.lower() or ".jpg"
-            base     = f"{stem}{suffix}"
-            count    = seen_names.get(base, 0)
-            seen_names[base] = count + 1
-            # Append _N suffix only when a name collision occurs
-            display  = f"{stem}_{count}{suffix}" if count else base
-
-            # Use uuid on disk so same-named uploads never collide in the dir
+        for upload, display in zip(files, _photo_ids([u.filename for u in files])):
+            # The disk name is a uuid so same-named uploads never collide in the
+            # dir; its suffix is only a hint (decoders read the content).
+            suffix = Path(display).suffix.lower() or ".jpg"
             dest = upload_dir / f"{uuid.uuid4().hex}{suffix}"
             dest.write_bytes(await upload.read())
             upload_info.append((dest, display))
@@ -371,15 +391,25 @@ class _SpaStaticFiles(StaticFiles):
     """
     Serve the built React PWA, falling back to index.html for any unmatched
     path so client-side routing (React Router) works on deep links / refresh.
+
+    Everything outside assets/ (index.html, sw.js, the manifest, icons) is sent
+    with Cache-Control: no-cache, so the browser revalidates it on every load
+    (a cheap 304 via the ETag). Without it, Chrome caches index.html by
+    heuristic for 10% of its age, and an installed PWA can keep loading the
+    old shell for weeks after a deploy. Files in assets/ are named by content
+    hash, so a new build never reuses their URLs.
     """
 
     async def get_response(self, path: str, scope):
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code == 404:
-                return FileResponse(self.directory / "index.html")
-            raise
+            if exc.status_code != 404:
+                raise
+            response = FileResponse(self.directory / "index.html")
+        if not path.startswith("assets/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 if _FRONTEND_DIST.is_dir():
