@@ -134,8 +134,9 @@ Rules:
    persistence (history, localStorage of results, caching of `/rank`). The
    service worker must never cache the API.
 5. **Compression stays on.** Images are downscaled (~1.5 MP) and re-encoded
-   JPEG before upload; the original filename must be preserved so `photo_id`
-   maps back to the preview.
+   JPEG before upload; the original filename must be preserved, exactly, so
+   `photo_id` maps back to the preview. The server must not rename it either
+   (SPECS §6.1); `tests/test_results_photos_e2e.py` checks both ends.
 6. **Test the golden path on a real phone** (iPhone Safari) before submitting —
    synthetic desktop testing does not validate the mobile flow or HEIC handling.
 

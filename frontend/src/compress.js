@@ -15,13 +15,14 @@ import { COMPRESS_MAX_PIXELS, COMPRESS_QUALITY } from "./config.js";
 
 /**
  * @param {File} file
+ * @param {string} [name]  Name to upload under (default: the file's own name).
+ *   The server returns it unchanged as the photo_id; see lib/uploadNames.js.
  * @returns {Promise<{ file: File, previewUrl: string|null, name: string }>}
- *   `file` is the blob to upload (compressed when possible, else the original);
- *   `previewUrl` is an object URL for display, or null when decode failed.
- *   `name` is the original filename — used to map results back by photo_id.
+ *   `file` is the blob to upload (compressed when possible, else the original),
+ *   named `name`; `previewUrl` is an object URL for display, or null when
+ *   decode failed. `name` maps the result back to the preview by photo_id.
  */
-export async function compressImage(file) {
-  const name = file.name;
+export async function compressImage(file, name = file.name) {
   try {
     const bitmap = await createImageBitmap(file);
     try {
@@ -44,8 +45,8 @@ export async function compressImage(file) {
       );
       if (!blob) throw new Error("toBlob returned null");
 
-      // Keep the original filename so the server's photo_id (the upload
-      // filename) maps back to this file's preview on the results screen.
+      // Upload under `name`: the server echoes it as the photo_id, which maps
+      // the result back to this preview on the results screen.
       const out = new File([blob], name, { type: "image/jpeg" });
       const previewUrl = URL.createObjectURL(blob);
       return { file: out, previewUrl, name };
@@ -55,7 +56,8 @@ export async function compressImage(file) {
   } catch {
     // Could not decode (unsupported HEIC on this browser, corrupt file, …).
     // Upload the original so scoring still works; no preview is available.
-    return { file, previewUrl: null, name };
+    const out = name === file.name ? file : new File([file], name, { type: file.type });
+    return { file: out, previewUrl: null, name };
   }
 }
 

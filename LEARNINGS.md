@@ -241,4 +241,10 @@ are equal.
 
 ---
 
+**Discovery:** On Android Chrome every fresh result showed the gradient placeholder instead of the photo, in every mode and batch size. The API rewrote each upload's name before using it as `photo_id`: it lower-cased the extension and added `.jpg` when there was none. The PWA finds each preview by the name it uploaded, so any name that was not already lower-case `.jpg` missed. Reproduced in headless Chromium: `1000330417.JPG` and a bare `1000330417` both came back as `1000330417.jpg`, and every card showed the placeholder; lower-case `.jpg` worked, which is why desktop and iPhone testing passed. The on-screen label is CSS-uppercased, so it cannot show which case the server returned. The rewrite dates from Phase 2 (`1e7e803`); it broke previews from the first PWA commit (`35f6111`), which keyed them by the original name. `910cceb` blamed the same symptom on the service worker. A repeated filename had a second problem: the PWA's preview map kept only one of the two, so one card showed the other photo.
+**Impact:** `photo_id` is now the uploaded filename exactly (SPECS §6.1). The PWA gives each upload a unique, non-empty name first, so the server never renames anything it sends. `tests/test_results_photos_e2e.py` drives the real flow in headless Chromium with Android-style names and checks that each card shows its own photo, and that a result restored from sessionStorage still shows placeholders.
+**Date:** 2026-11-27
+
+---
+
 *Add new entries above this line as discoveries are made.*

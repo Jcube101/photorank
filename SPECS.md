@@ -500,6 +500,13 @@ mode is used. Otherwise set mode. Falls back to set mode if any timestamp is abs
 The full ranker output (see Section 5.4). All uploaded files are deleted
 before the response is returned, regardless of success or failure.
 
+**`photo_id`** is each upload's filename **exactly as sent**: same case, no
+extension added or changed (`1000330417.JPG` and a bare `1000330417` come back
+as is). Only two cases change: a missing filename becomes `image.jpg`, and a
+repeated name gets `_N` before its extension, using the lowest `N` not already
+taken in the batch (`a.jpg`, `a.jpg` → `a.jpg`, `a_1.jpg`). The PWA finds each
+result's preview by `photo_id`, so this is a contract (`api/main.py:_photo_ids`).
+
 **Error responses:**
 
 | Status | Condition |
@@ -598,8 +605,10 @@ graceful `error` state.
 ### 9.3 Client-side compression
 
 Each image is downscaled to ≤ ~1.5 MP (`COMPRESS_MAX_PIXELS = 1_500_000`) and
-re-encoded as JPEG at quality 0.85 via `<canvas>`. The **original filename is
-preserved** so the response `photo_id` maps back to the local preview. The same
+re-encoded as JPEG at quality 0.85 via `<canvas>`. Each file is **uploaded under
+its original filename** (case and extension unchanged), made unique first by
+the same `_N` rule as §6.1 (`src/lib/uploadNames.js`), so the server never
+renames it and the response `photo_id` maps back to the local preview. The same
 compressed blob is both uploaded and shown on screen, so the user sees exactly
 what was scored. HEIC is converted in the process (it is otherwise unrenderable
 in most browsers). If decode fails, the original file is uploaded untouched and

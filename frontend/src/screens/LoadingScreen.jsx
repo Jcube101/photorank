@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { profileName } from "../config.js";
 import { compressImage } from "../compress.js";
 import { rankPhotos } from "../api.js";
+import { uploadNames } from "../lib/uploadNames.js";
 
 export default function LoadingScreen({ files, profile, onDone, onError, onBack }) {
   const count = files.length;
@@ -38,9 +39,12 @@ export default function LoadingScreen({ files, profile, onDone, onError, onBack 
     (async () => {
       try {
         const compressed = [];
+        // photo_id → preview URL. Each file is uploaded under a distinct name
+        // that the server echoes back as its photo_id (lib/uploadNames.js).
         const previewMap = new Map();
-        for (const f of files) {
-          const r = await compressImage(f);
+        const names = uploadNames(files.map((f) => f.name));
+        for (const [i, f] of files.entries()) {
+          const r = await compressImage(f, names[i]);
           if (cancelled) {
             if (r.previewUrl) URL.revokeObjectURL(r.previewUrl);
             return;
