@@ -27,7 +27,9 @@ VITE_API_BASE=http://localhost:8007 npm run dev
 ```
 
 `mode` is intentionally **not** sent — the server auto-detects burst vs set
-from EXIF timestamps.
+from capture times. Compression strips EXIF, so `src/lib/captureTime.js` reads
+each photo's `DateTimeOriginal` (and nothing else) from the original file first,
+and it is sent as the `capture_times` field.
 
 ## Structure
 

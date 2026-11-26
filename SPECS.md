@@ -24,9 +24,10 @@ are fixed: `face_sharpness 0.50 / sharpness 0.20 / face_exposure 0.20 / exposure
 
 In the CLI, the mode is selected explicitly via `--mode`. In the API (`POST /rank`),
 the `mode` field is optional: when omitted, the API auto-detects burst mode if ≤6
-photos are uploaded and all EXIF `DateTimeOriginal` timestamps fall within 10 seconds
-of each other. If any timestamp is absent or unreadable, auto-detection falls back to
-set mode.
+photos are uploaded and all their capture times (EXIF `DateTimeOriginal`) fall within
+10 seconds of each other. Each photo's time comes from the `capture_times` field the
+PWA sends (§6.1, §9.2), else from the uploaded file's own EXIF (Exif IFD). If any
+time is absent or unparseable, auto-detection falls back to set mode.
 
 ---
 
@@ -488,12 +489,17 @@ Rank a batch of photos.
 |---|---|---|---|
 | `files` | file[] | Yes | 2–20 images in accepted formats |
 | `profile` | string | No | `family` (default), `portrait`, `event`, `travel`, or `custom` |
-| `mode` | string | No | `burst` or `set`. When omitted, auto-detected from EXIF timestamps |
+| `mode` | string | No | `burst` or `set`. When omitted, auto-detected from capture times |
 | `weights` | string (JSON) | If `custom` | JSON object with all six axes summing to 1.0 |
+| `capture_times` | string (JSON) | No | `{"<filename>": "YYYY:MM:DD HH:MM:SS"}`: each photo's EXIF `DateTimeOriginal`, keyed by its upload filename. The PWA reads it before compression strips EXIF. Nothing else from EXIF is ever sent. |
 
 **Auto-detection rule (when `mode` is omitted):** If ≤6 photos are uploaded and
-all `DateTimeOriginal` EXIF timestamps are within 10 seconds of each other, burst
-mode is used. Otherwise set mode. Falls back to set mode if any timestamp is absent.
+all their capture times are within 10 seconds of each other, burst mode is used.
+Otherwise set mode. A photo's capture time is its entry in `capture_times`, else
+the `DateTimeOriginal` in its own EXIF (Exif IFD, 0x8769; for uploads of original
+files). Falls back to set mode if any time is absent or unparseable, and a
+malformed `capture_times` field is ignored. Capture times are never logged,
+returned or stored.
 
 **Response 200** — application/json:
 
@@ -601,6 +607,12 @@ graceful `error` state.
 - `files` — the compressed images (field name exactly `files`).
 - `profile` — the selected profile id.
 - `mode` is **omitted** so the server auto-detects (Section 0).
+- `capture_times` — `{upload name: "YYYY:MM:DD HH:MM:SS"}`, only for photos that
+  have one; the field is left out when none do. `src/lib/captureTime.js` reads
+  EXIF `DateTimeOriginal` (tag 0x9003, via the Exif-IFD pointer 0x8769) from the
+  first 128 KB of the **original** file, before compression strips EXIF. It reads
+  no other tag and never follows the GPS pointer. JPEG only: HEIC and anything
+  unreadable send no time, so the server falls back to set mode.
 
 ### 9.3 Client-side compression
 

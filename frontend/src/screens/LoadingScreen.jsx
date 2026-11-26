@@ -5,13 +5,15 @@
 // rank). Since /rank is one blocking call, the progress bar eases toward ~92%
 // while waiting and completes when the response lands. The "Scoring axes"
 // (Gemini) stage is dropped when we expect burst mode (≤6 photos) — purely a
-// display cue; the server still makes the real burst/set decision from EXIF.
+// display cue; the server makes the real burst/set decision from the capture
+// times we read here, before compression strips EXIF (lib/captureTime.js).
 
 import { useEffect, useRef, useState } from "react";
 import { profileName } from "../config.js";
 import { compressImage } from "../compress.js";
 import { rankPhotos } from "../api.js";
 import { uploadNames } from "../lib/uploadNames.js";
+import { readCaptureTime } from "../lib/captureTime.js";
 
 export default function LoadingScreen({ files, profile, onDone, onError, onBack }) {
   const count = files.length;
@@ -43,7 +45,12 @@ export default function LoadingScreen({ files, profile, onDone, onError, onBack 
         // that the server echoes back as its photo_id (lib/uploadNames.js).
         const previewMap = new Map();
         const names = uploadNames(files.map((f) => f.name));
+        // upload name → "YYYY:MM:DD HH:MM:SS", for burst detection. Read from
+        // the original: compression drops EXIF. Nothing else from EXIF is sent.
+        const captureTimes = {};
         for (const [i, f] of files.entries()) {
+          const time = await readCaptureTime(f);
+          if (time) captureTimes[names[i]] = time;
           const r = await compressImage(f, names[i]);
           if (cancelled) {
             if (r.previewUrl) URL.revokeObjectURL(r.previewUrl);
@@ -60,6 +67,7 @@ export default function LoadingScreen({ files, profile, onDone, onError, onBack 
 
         const result = await rankPhotos(compressed, profile, {
           signal: controller.signal,
+          captureTimes,
         });
         if (cancelled) return;
 

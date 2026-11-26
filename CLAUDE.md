@@ -214,6 +214,8 @@ photorank/
     │   ├── usePwaInstall.js       ← Add-to-Home-Screen prompt (after 1st success)
     │   ├── lib/breakdown.js      ← normalizes API score_breakdown → bar rows (hides 0-weight axes)
     │   ├── lib/rerank.js         ← client-side profile re-rank (mirrors rank_photos)
+    │   ├── lib/uploadNames.js    ← unique upload names (the server echoes them as photo_id)
+    │   ├── lib/captureTime.js    ← EXIF DateTimeOriginal from the original file (burst detection)
     │   ├── screens/              ← UploadScreen, LoadingScreen, ResultsScreen
     │   └── components/           ← HeroCard, RankCard, AxisBar, MessageScreen
     └── _design/                  ← archived Claude Design reference (NOT production)
@@ -420,7 +422,11 @@ near-black `--ink`, olive `--accent`).
   on every switch); only the "Reset to <run profile>" link appears, and it does
   not change the row height. `PROFILE_WEIGHTS` in `src/config.js` mirrors
   `core/profiles.py` — keep them in sync. Hidden for burst-mode results.
-- **Mode is omitted from the request** so the server auto-detects (EXIF).
+- **Mode is omitted from the request** so the server auto-detects. Compression
+  strips EXIF, so before compressing, `src/lib/captureTime.js` reads each
+  original's `DateTimeOriginal` (first 128 KB, JPEG only, that one tag, never
+  GPS) and the times go up as the `capture_times` field, keyed by upload name.
+  Without it, burst mode could never trigger from the app (LEARNINGS 2026-11-27).
 - **Client-side compression** (`src/compress.js`) downscales to ~1.5 MP and
   re-encodes JPEG; this both shrinks the upload and yields a browser-renderable
   preview (HEIC otherwise won't display). Each file is uploaded under its exact
@@ -450,6 +456,8 @@ near-black `--ink`, olive `--accent`).
 - **Deploy (the Pi):** this checkout is the live service and `frontend/dist` is
   served straight from disk, so rebuilding `dist` deploys the frontend at once.
   Build into another `--outDir` to test a branch; rebuild `dist` only from `main`.
+  Work on a branch in a separate `git worktree` so this checkout stays on `main`.
+  See "Merging and Deploying" below.
 
 **Run:** `cd frontend && npm install && npm run dev` (or `npm run build`).
 Override the API with `VITE_API_BASE` (default `https://photorank.job-joseph.com`).
@@ -469,6 +477,10 @@ These cannot be relaxed for any reason:
    (Phase 2 responsibility — not yet implemented.)
 5. **Training consent is explicit.** If v2 ever collects data for training, it
    must be behind an explicit opt-in. Never assumed from usage.
+6. **Only the capture time leaves the phone from EXIF.** The PWA sends each
+   photo's `DateTimeOriginal` (`capture_times`) for burst detection and no other
+   EXIF tag, never GPS; the uploaded pixels carry no EXIF (canvas re-encode).
+   The server never logs, returns or stores capture times.
 
 ---
 
@@ -483,6 +495,37 @@ These cannot be relaxed for any reason:
 5. **Test with real photos.** Synthetic data does not validate scoring quality.
 6. **Update LEARNINGS.md** when real-photo testing reveals something unexpected.
 7. **Update this file** when architectural decisions change.
+
+---
+
+## Merging and Deploying
+
+Claude Code may merge its own PRs to `main` and deploy them to the Pi when all
+tests and lint pass. There is no CI, so run them on the branch first:
+`PYTHONPATH=. ./venv/bin/pytest -q` and the `ruff check` line in "How to Run".
+
+**Stop and ask the owner before merging anything that:**
+- changes how photos or personal data are stored, logged or deleted;
+- touches `.env` or any secret;
+- can't be undone.
+
+**Deploy.** The checkout at `~/projects/photorank` is the live service
+(`photorank.service`, port 8007), so it must stay on `main`.
+1. Tag the `main` that is live now, so a rollback is one command:
+   `git tag pre-pr-<number> && git push origin pre-pr-<number>`
+2. Merge the PR, then `git pull --ff-only`.
+3. `cd frontend && npm ci && npm run build` (this rebuilds `frontend/dist`, which is live at once).
+4. `sudo systemctl restart photorank.service`
+5. Check `curl -s http://127.0.0.1:8007/health` reports `"status":"ok"`, then
+   smoke-test what changed against `127.0.0.1:8007`.
+
+**Rollback (one command):**
+```bash
+cd ~/projects/photorank && git checkout pre-pr-<number> && (cd frontend && npm ci && npm run build) && sudo systemctl restart photorank.service
+```
+`git checkout main` with the same build and restart rolls forward again.
+
+**Always end by telling the owner exactly what to check on their phone.**
 
 ---
 
@@ -512,7 +555,9 @@ These cannot be relaxed for any reason:
 - `scripts/label_shoot.py` — labelling page builder; page logic in `scripts/labeller/core.js`, whose `validateKey()` mirrors `eval_shoot.py:resolve_key()` (tests check both agree)
 - `api/main.py:rank_endpoint()` — FastAPI POST /rank handler; saves uploads, auto-detects mode, calls ingest → score → rank, cleans up
 - `api/main.py:_photo_ids()` — photo_id per upload: the filename exactly as sent; only a missing or repeated name changes
-- `api/main.py:_auto_detect_mode()` — reads EXIF DateTimeOriginal from raw uploads; returns 'burst' if ≤6 files within 10s, else 'set'
+- `api/main.py:_auto_detect_mode()` — 'burst' if ≤6 photos all have capture times within 10 s, else 'set'; each time comes from the `capture_times` field, else the file's EXIF (Exif IFD, via `core/group.py:read_capture_time`)
+- `api/main.py:_sent_capture_times()` — parses the PWA's `capture_times` field; anything malformed is ignored (→ set mode)
+- `frontend/src/lib/captureTime.js:readCaptureTime()` — DateTimeOriginal from the first 128 KB of an original JPEG; reads no other tag
 - `api/main.py:_run_burst()` — burst scoring sub-routine (called after EXIF stripping by ingest)
 - `api/main.py:_run_set()` — set mode scoring sub-routine (deterministic → Gemini → merge → rank)
 

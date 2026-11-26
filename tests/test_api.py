@@ -6,6 +6,7 @@ identifies or describes a photo may reach the logs or the error detail
 (CLAUDE.md privacy rule 2). Burst mode never calls Gemini.
 """
 
+import json
 import logging
 
 import pytest
@@ -13,6 +14,7 @@ from fastapi import HTTPException
 
 from api import main as api
 from core.profiles import PROFILES
+from tests.exif_jpeg import jpeg as exif_jpeg
 
 PHOTOS = [{"photo_id": f"IMG_48{i:02d}.jpg", "path": f"/tmp/upload-{i}.jpg"} for i in range(3)]
 
@@ -149,3 +151,95 @@ def test_rank_returns_the_uploaded_names_as_photo_ids(monkeypatch, mode):
     res = TestClient(api.app).post("/rank", files=files, data={"mode": mode})
     assert res.status_code == 200, res.text
     assert sorted(r["photo_id"] for r in res.json()["ranked"]) == sorted(names)
+
+
+# --- Burst auto-detection from capture times --------------------------------
+# The PWA's compression strips EXIF, so it sends each photo's DateTimeOriginal
+# in `capture_times`; uploads of original files keep their own EXIF, now read
+# from the Exif IFD. Before this, burst mode never triggered from the app
+# (LEARNINGS 2026-11-27).
+
+BURST_TIMES = ["2026:05:13 11:03:27", "2026:05:13 11:03:29",
+               "2026:05:13 11:03:30", "2026:05:13 11:03:37"]  # 4 photos, 10 s apart end to end
+
+
+def _rank(monkeypatch, files, data=None):
+    """POST /rank with no mode, counting Gemini calls. Returns (response, calls)."""
+    from fastapi.testclient import TestClient
+
+    calls = []
+
+    def gemini(paths, photo_ids, profile):
+        calls.append(len(photo_ids))
+        return _gemini_rows(photo_ids)
+
+    monkeypatch.setattr(api, "score_photos", gemini)
+    res = TestClient(api.app).post("/rank", files=files, data=data or {})
+    assert res.status_code == 200, res.text
+    return res.json(), calls
+
+
+def _pwa_upload(times):
+    """What the PWA sends: compressed photos (no EXIF) plus capture_times."""
+    names = [f"10003304{i:02d}.jpg" for i in range(len(times))]
+    files = [("files", (n, _jpeg(i), "image/jpeg")) for i, n in enumerate(names)]
+    sent = {n: t for n, t in zip(names, times) if t is not None}
+    return files, {"capture_times": json.dumps(sent)}
+
+
+def test_four_photos_within_10s_run_burst_without_gemini(monkeypatch):
+    out, calls = _rank(monkeypatch, *_pwa_upload(BURST_TIMES))
+    assert out["mode"] == "burst"
+    assert calls == []
+
+
+@pytest.mark.parametrize("byteorder", ["<", ">"], ids=["II", "MM"])
+def test_original_uploads_use_their_own_exif_time(monkeypatch, byteorder):
+    """curl or a script uploading originals: no capture_times, EXIF intact."""
+    files = [("files", (f"IMG_{i}.jpg", exif_jpeg(seed=i, dto=t, byteorder=byteorder), "image/jpeg"))
+             for i, t in enumerate(BURST_TIMES)]
+    out, calls = _rank(monkeypatch, files)
+    assert out["mode"] == "burst"
+    assert calls == []
+
+
+def _set_case(case):
+    if case == "no times":
+        files, _ = _pwa_upload(BURST_TIMES)
+        return files, {}
+    if case == "malformed field":
+        files, _ = _pwa_upload(BURST_TIMES)
+        return files, {"capture_times": "{not json"}
+    if case == "field not an object":
+        files, _ = _pwa_upload(BURST_TIMES)
+        return files, {"capture_times": json.dumps(BURST_TIMES)}
+    if case == "one photo without a time":
+        return _pwa_upload(BURST_TIMES[:3] + [None])
+    if case == "unparseable time":
+        return _pwa_upload(BURST_TIMES[:3] + ["2026:13:45 99:00:00"])
+    if case == "11 s apart":
+        return _pwa_upload(BURST_TIMES[:3] + ["2026:05:13 11:03:38"])
+    if case == "7 photos":
+        return _pwa_upload([f"2026:05:13 11:03:2{i}" for i in range(7)])
+    raise AssertionError(case)
+
+
+@pytest.mark.parametrize("case", ["no times", "malformed field", "field not an object",
+                                  "one photo without a time", "unparseable time",
+                                  "11 s apart", "7 photos"])
+def test_photos_without_usable_times_run_set_mode(monkeypatch, case):
+    files, data = _set_case(case)
+    out, calls = _rank(monkeypatch, files, data)
+    assert out["mode"] == "set"
+    assert calls == [len(files)]
+
+
+def test_capture_times_never_reach_the_logs(monkeypatch, caplog):
+    files, data = _pwa_upload(BURST_TIMES)
+    with caplog.at_level(logging.DEBUG):
+        out, _ = _rank(monkeypatch, files, data)
+    assert out["mode"] == "burst"
+    logged = _logged(caplog)
+    assert "resolved mode=burst" in logged
+    for name, time in json.loads(data["capture_times"]).items():
+        assert name not in logged and time not in logged and time[11:] not in logged
