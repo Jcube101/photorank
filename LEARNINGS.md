@@ -223,4 +223,22 @@ are equal.
 
 ---
 
+**Discovery:** On a professional shoot, face sharpness alone is a weak picker. On Wat Arun (Sony A7 III, 85mm f/1.4, oracle grouping, 3 runs) `face_sharpness` alone put the owner's pick first in 17–27% of sets, about the 23% that random choice gets. The photographer nailed focus, so frames within a set differ in expression and pose, not sharpness. Gemini's axes alone reached 43–46%, the combined weights 42–46%. Round weight sets between those barely differ: every sensible one scored 44–47% top-1 and 78–82% top-3, inside Gemini's own run-to-run range. The weight sweep's best (59% top-1, on scores averaged over runs) has no plateau around it, so it is a fit to noise on about 34 sets.
+**Impact:** The plan assumed missed focus is the most common reject at f/1.4. For a pro shoot it is not: expression and pose decide picks. `face_sharpness` stays as a small guard for shoots where focus does miss; 0.1 does as well as 0.3 here. The owner's pick is in the model's top 3 in about 81% of sets but first in under half, so the results UI shows each set's top 3 (V2-PLAN §10.3).
+**Date:** 2026-11-26
+
+---
+
+**Discovery:** Gemini can write a photo's position into its filename. Shoot mode labelled each photo "Photo N — photo_id: <filename>". For the set DSC00005–DSC00009 (photos 1–5), Gemini returned `DSC00003.JPG` and `DSC00004.JPG` for photos 3 and 4, in all 6 evaluation runs and again in a diagnostic call. The set was then missing two photos and failed. That check sat outside the retry loop, so it failed at once. Two other sets failed intermittently (4 of 6 and 1 of 6 runs). Their error text was not kept, so their cause is unconfirmed.
+**Impact:** Shoot mode now labels photos `photo_1` … `photo_N`, so the label is the position and cannot be confused with it. It maps replies back by label, rewrites labels in notes to filenames, and retries a reply that names the wrong photos (`strict_ids`). Checked live: both sets that had failed then scored on the first request, spread off and on (4 of 4 calls, no retries). Set mode is unchanged. On a mismatch it still silently drops the photo from the ranking, and `api/main.py` logs its filename (privacy rule 2). That is a follow-up.
+**Date:** 2026-11-26
+
+---
+
+**Discovery:** On Wat Arun every grouping error with the default thresholds was a missed boundary between frames under 20 s apart: 6 of 35 boundaries, at gaps of 9–18 s, while frames inside a set are about 2 s apart. Lowering `T_SOFT` to 15 s (with `H_LOW` 10 and `C_LOW` 0.15) reaches 3 corrections, the §12.2 target. The plan's adaptive time term (a pause is 4 × the recent in-set pace) also reaches 3. It fixes a different four of the six and adds a different false split, so on one shoot with a steady pace it does not beat the fixed rule.
+**Impact:** The adaptive rule is kept as an option (`TIME_RULE`, off by default) until a shoot with a varying pace is labelled. The previous sweep grid (`T_SOFT` 10/20/30) stepped over 15 s, so it now includes 15.
+**Date:** 2026-11-26
+
+---
+
 *Add new entries above this line as discoveries are made.*

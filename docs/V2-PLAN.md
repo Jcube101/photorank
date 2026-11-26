@@ -4,6 +4,13 @@
 **Author context:** Builds on CLAUDE.md, SPECS.md, ROADMAP.md, LEARNINGS.md as of 2026-10-03.
 **Reference shoot:** Wat Arun, 180 JPGs, about 10 MB each, Sony A7 III, 85mm f/1.4, one subject.
 
+**Decisions, 2026-11-26** (from the Phase A evaluation on Wat Arun; each is also
+marked where it applies):
+- **Q19:** the A7 III writes no `SubSecTimeOriginal`. Capture times have 1 s resolution, and ties keep filename order. See §14.
+- **Q6:** forced spread is **off** in shoot mode. See §6.2 and §14.
+- **V2-REVIEW J9:** score **one set per synchronous request**, not through the jobs API. See the note at the top of §9.
+- **Results UI:** each set shows its **top 3** for the user to choose from, not one winner. See §10.3.
+
 ---
 
 ## 1. Summary
@@ -174,6 +181,11 @@ This is the same `_SYSTEM_PROMPT` contract with a short shoot-mode addendum. It 
 <5 per axis"). Inside a tight set this can invent differences. The evaluation
 (§12.3) runs both variants. The default is chosen from the data, not assumed.
 
+**DECIDED (2026-11-26):** forced spread is **off** in shoot mode. With the combined
+weights, spread off scored top-1 46% (44–48%) and top-3 81% against 42% and 81%
+with it on. The code default (`--no-force-spread`, `force_spread=True`) is not
+flipped yet; that ships with the tuned thresholds and weights.
+
 ### 6.3 Shoot weights
 
 The new axis set is the six set-mode axes plus `face_sharpness`:
@@ -284,6 +296,11 @@ data (§12.2).
 term, where a pair counts as a long pause if `dt > k × median(dt over the
 previous 10 pairs)`. This handles shooters whose pace varies. It is only
 adopted if it beats fixed thresholds on the answer key.
+*Built and evaluated 2026-11-26* as `TIME_RULE: "adaptive"` in `core/group.py`
+(off by default): the pause is `max(T_MIN, ADAPT_K × median dt of the last
+ADAPT_N same-set pairs)`, then rule 3's visual test. On Wat Arun it ties the
+best fixed rule (3 corrections each); `eval_shoot.py --stage grouping` reports
+both.
 
 ### 7.4 Missing data
 
@@ -444,6 +461,29 @@ GroupState:
 
 ## 9. API changes
 
+> **DECIDED (2026-11-26), V2-REVIEW J9: one set per synchronous request.**
+> Phase B builds a stateless endpoint (one set in, the §9.5 group object out)
+> instead of the jobs API described below. One Gemini call per set took
+> **13.3 s for 13 photos**, the largest Wat Arun set, on `gemini-3.8-flash`
+> (thinking `low`). Across all 199 calls in the evaluation the slowest was 16 s
+> and the 95th percentile 12 s, far inside Cloudflare's 100 s limit. This
+> section stays as written until Phase B rewrites it.
+>
+> This removes:
+> - §9.1 create, §9.2 chunks (packing, `chunk_index`, 413 and 503), §9.3 finalize, §9.4 polling, §9.5 incremental results (`seq` / `since`) and §9.6 `DELETE`.
+> - §9.7's one-group re-score job. A merged set is simply sent again.
+> - §9.8's per-job state, TTL reaper and job-directory startup sweep, and the Pi-side job state in §8.3. Photos are on the Pi only for the length of one request, as in v1.
+> - §9.9's job timing. Re-estimate it as prepare + upload + about (sets ÷ 4) × 10 s.
+> - Open questions **Q1** (the SPECS §7.3 amendment for per-job state is no longer needed; v1's guarantee holds) and **Q10** (no in-memory job state, so nothing requires a single uvicorn worker).
+> - Review findings J2, J3, J4, J6, J8 and J10, and the `DELETE` half of J7.
+>
+> Still needed: a timeout on each Gemini call (J1, now per request), J5's swap
+> exposure (now the same as v1's), and J7's "score the phone's upload in place,
+> without a second ingest copy". The phone runs up to four set requests at a
+> time and must stay in the foreground while sets are scoring; a request in
+> flight when the tab is backgrounded fails and is sent again. IndexedDB resume
+> (§8.2) and Access-expiry detection (§10.6) are unchanged.
+
 v1 endpoints (`POST /rank`, `GET /health`) are **unchanged**. New endpoints
 live under `/jobs`. They are all on `photorank.job-joseph.com`, so Cloudflare
 Access covers them with no code, and the existing service worker already
@@ -590,6 +630,13 @@ As soon as the first group is scored, the user can open the results list while
 the rest continues.
 
 ### 10.3 Results: set list
+
+> **DECIDED (2026-11-26): show each set's top 3 for the user to choose from,
+> not one winner.** On Wat Arun (oracle grouping, spread off, combined weights)
+> the owner's pick is the model's #1 in 46% of sets but in its top 3 in 81%.
+> The user's choice becomes the set's pick, as an override does today
+> (§10.4). The rows below still describe a single winner until Phase B
+> rewrites them.
 
 - Header: "180 photos · 19 sets · 4 starred". **Shortlist** button. A warning chip if capture times were missing.
 - One row per set, in shooting order:
@@ -839,16 +886,16 @@ These are deliberately not decided here. Each one names the default this doc
 assumed so work isn't blocked. Owner review on 2026-10-03 marked each item
 **DECIDED**, **DEFAULT ACCEPTED** (the assumed answer stands), or left it open.
 
-1. **Privacy rule change on the Pi.** The async job model needs per-job state across requests: scores in memory until fetched or expired (30 min idle), and photos on disk from chunk receipt until their group is scored. Is this acceptable as an amendment to SPECS §7.3 ("no caching, nothing persists between requests")? *Assumed: yes, with per-group deletion, TTL reaper, and startup sweep.* **DECIDED (2026-10-03):** Yes. Per-job state is approved as an amendment to SPECS §7.3, with per-group deletion, TTL reaper, and startup sweep as described.
+1. **Privacy rule change on the Pi.** The async job model needs per-job state across requests: scores in memory until fetched or expired (30 min idle), and photos on disk from chunk receipt until their group is scored. Is this acceptable as an amendment to SPECS §7.3 ("no caching, nothing persists between requests")? *Assumed: yes, with per-group deletion, TTL reaper, and startup sweep.* **DECIDED (2026-10-03):** Yes. Per-job state is approved as an amendment to SPECS §7.3, with per-group deletion, TTL reaper, and startup sweep as described. **No longer needed (2026-11-26):** with one set per synchronous request (J9, §9 note) there is no per-job state, so v1's guarantee holds unchanged.
 2. **DEFAULT ACCEPTED.** **Max photos per shoot.** *Assumed 300.* Is there a real upper bound (e.g. a 600-photo wedding)?
 3. **DEFAULT ACCEPTED.** **Time budget.** What end-to-end wall-clock time is acceptable for 180 photos? *Assumed ≤ 8 min*, since v1's < 90s target doesn't scale.
 4. **Picker limits on the target phone.** Does the Android photo picker allow 180 selected at once through `<input type=file multiple>`? Some devices cap a single selection (often around 100). *Assumed: additive selection covers it.* Needs a device test.
 5. **DEFAULT ACCEPTED.** **Profiles in full shoot mode.** Should the user's profile (family/portrait/…) apply, for example blended as `face_sharpness w + (1−w) × profile`? Or is one fixed `SHOOT_WEIGHTS` set enough? *Assumed: fixed SHOOT_WEIGHTS for A–B.*
-6. **DEFAULT ACCEPTED.** **Forced score spread in the Gemini prompt.** Keep or drop it for within-set scoring? *Decided by the §12.3 ablation.*
+6. **DEFAULT ACCEPTED.** **Forced score spread in the Gemini prompt.** Keep or drop it for within-set scoring? *Decided by the §12.3 ablation.* **DECIDED (2026-11-26):** off in shoot mode. See §6.2.
 7. **DEFAULT ACCEPTED.** **IndexedDB retention.** Is 24h auto-purge the right TTL? Should a session be cleared automatically after the user exports the shortlist?
 8. **DEFAULT ACCEPTED.** **Stars and export.** Should winners be starred by default, or nothing starred until the user acts? Is the shortlist output a filename list (to find originals), shared compressed copies, or shared originals? *Assumed: nothing starred by default, plus a "Star all winners" button. Copy filenames always, share where possible.*
 9. **DEFAULT ACCEPTED.** **EXIF parser.** Use `exifr` lite (a new dependency, about 10 KB) or a hand-written JPEG APP1 reader (no dependency, JPEG-only)? *Leaning towards `exifr`.*
-10. **DEFAULT ACCEPTED.** **uvicorn workers.** Does the Pi's systemd unit run a single worker? In-memory job state needs one. Must verify before Phase B.
+10. **DEFAULT ACCEPTED.** **uvicorn workers.** Does the Pi's systemd unit run a single worker? In-memory job state needs one. Must verify before Phase B. **No longer needed (2026-11-26):** there is no in-memory job state with one set per request (J9, §9 note).
 11. **tmpfs for job files on the Pi.** Mount the job root on `tmpfs` so a power cut leaves nothing on disk? It depends on Pi RAM. 70 MB peak is small. **DECIDED (2026-10-03):** Check whether `/tmp` is already tmpfs on the Pi (`findmnt /tmp`) before adding a mount.
 12. **DEFAULT ACCEPTED.** **Partial-job semantics.** Is "failed groups shown with retry, other groups delivered" acceptable under the v1 rule "partial results are not acceptable"? *Assumed: yes. Atomicity is per group (one Gemini batch).*
 13. **DEFAULT ACCEPTED.** **Override and star after edits.** When a set with an override or star is split or merged, should they follow the photo (assumed) or reset?
@@ -857,5 +904,5 @@ assumed so work isn't blocked. Owner review on 2026-10-03 marked each item
 16. **Committing the answer key.** It contains only filenames and set ranges. Commit it under `eval/`, or keep it git-ignored next to the photos? **DECIDED (2026-10-03):** Commit the answer key under `eval/`. Filenames only.
 17. **What counts as a set?** For example, does a change from full-length to headshot at the same spot start a new set? This decides both labelling and how sensitive the threshold for "strong change" (`H_HIGH`/`C_HIGH`) should be. Needs the owner's definition before labelling. **DECIDED (2026-10-03):** A new set is any photo the owner might post alongside the others as its own photo. The same spot with a framing change (e.g. full-length to headshot) counts as a NEW set. Added to the §12.1 labelling rules.
 18. **DEFAULT ACCEPTED.** **Upload resolution for full shoot.** If the §12.4 ablation shows 1.5 MP hides focus misses, options are about 3 MP uploads (roughly 2× bytes) or a phone-side face crop (no reliable browser face detector, so this is hard). *Assumed: 1.5 MP until data says otherwise.*
-19. **Sony sub-second timestamps.** Does the A7 III write `SubSecTimeOriginal`? Does the transfer path (Imaging Edge / card reader / cloud) keep `DateTimeOriginal` intact? Imaging Edge can also be set to transfer 2 MP copies. *Assumed: full-size originals with DateTimeOriginal kept. Check on the reference files.* **DECIDED (2026-10-03):** Partially answered. Reference files on the phone are full-size originals (4000×6000, about 10.4 MB) with capture time intact. `SubSecTimeOriginal` is still unverified.
+19. **Sony sub-second timestamps.** Does the A7 III write `SubSecTimeOriginal`? Does the transfer path (Imaging Edge / card reader / cloud) keep `DateTimeOriginal` intact? Imaging Edge can also be set to transfer 2 MP copies. *Assumed: full-size originals with DateTimeOriginal kept. Check on the reference files.* **DECIDED (2026-10-03):** Partially answered. Reference files on the phone are full-size originals (4000×6000, about 10.4 MB) with capture time intact. `SubSecTimeOriginal` is still unverified. **DECIDED (2026-11-26):** the A7 III writes no `SubSecTimeOriginal` (none of the 187 Wat Arun files has it, nor `SubSecTime` or `SubSecTimeDigitized`). Capture times have 1 s resolution, so frames shot in the same second keep filename order (the `(time, filename)` sort). Every photo is `time_source: "exif"`.
 20. **Gemini model.** Full shoot mode makes about 20 calls per shoot with up to 20 images each. The model is `gemini-3.8-flash` with thinking level "low". The model swap ships separately, before Phase A. Confirm its limits (images per request, RPM) for this usage, and re-measure latency per group on 3.8 Flash in the §12.4 diagnostics.

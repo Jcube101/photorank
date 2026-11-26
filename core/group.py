@@ -45,6 +45,8 @@ Where this departs from the plan (docs/V2-REVIEW.md G1, G2, G3)
     never leaves a piece smaller than MIN_GROUP.
   - FAST_RULE selects how rule 4 combines dh and dc. Default "and" is the
     plan's behaviour.
+  - The plan's optional adaptive time term is TIME_RULE "adaptive" (see
+    ADAPTIVE_DEFAULTS). It is off by default and not part of THRESHOLDS.
 
 No GPS or other EXIF tag is read. Nothing here is logged or persisted.
 """
@@ -75,6 +77,30 @@ THRESHOLDS: dict = {
 
 FAST_RULES = ("and", "or", "dh")
 
+# Optional adaptive time term (V2-PLAN §7.3, "evaluated rather than shipped").
+# Off unless TIME_RULE is "adaptive". These keys are kept out of THRESHOLDS so
+# the default output, the golden fixture and GROUPING_VERSION are unchanged.
+#
+# In adaptive mode, T_SOFT is replaced pair by pair with a pause threshold
+# that follows the shooter's pace:
+#
+#     t_pause = max(T_MIN, ADAPT_K * median(dt of the last ADAPT_N pairs the
+#                                           table decided were same-set))
+#
+# A pair with t_pause <= dt < T_HARD then goes through rule 3 (a boundary if
+# there is a visual change), and a quicker pair through rule 4. Rules 1 and 2
+# (T_HARD) are unchanged. With no same-set history yet, t_pause is T_SOFT.
+# The history uses the table's own decisions as it goes, before the post-pass,
+# so the rule stays a single linear pass.
+ADAPTIVE_DEFAULTS: dict = {
+    "TIME_RULE": "fixed",   # "fixed" | "adaptive"
+    "T_MIN":     8,         # s. The pause threshold never drops below this.
+    "ADAPT_K":   4,         # pause = ADAPT_K x the recent same-set median dt.
+    "ADAPT_N":   10,        # same-set pairs in the running median.
+}
+
+TIME_RULES = ("fixed", "adaptive")
+
 _EXIF_IFD            = 0x8769
 _TAG_DATETIME_ORIG   = 0x9003
 _TAG_SUBSEC_ORIG     = 0x9291
@@ -88,13 +114,27 @@ _HIST_BINS           = 128
 # ---------------------------------------------------------------------------
 
 def resolve_thresholds(overrides: dict | None = None) -> dict:
-    """Return THRESHOLDS with overrides applied. Raises ValueError if invalid."""
+    """
+    Return THRESHOLDS with overrides applied. Raises ValueError if invalid.
+
+    The adaptive keys (ADAPTIVE_DEFAULTS) appear in the result only when an
+    override names one of them, so the default result is exactly THRESHOLDS.
+    """
     th = dict(THRESHOLDS)
     if overrides:
-        unknown = set(overrides) - set(THRESHOLDS)
+        unknown = set(overrides) - set(THRESHOLDS) - set(ADAPTIVE_DEFAULTS)
         if unknown:
             raise ValueError(f"Unknown grouping thresholds: {sorted(unknown)}")
+        if set(overrides) & set(ADAPTIVE_DEFAULTS):
+            th.update(ADAPTIVE_DEFAULTS)
         th.update(overrides)
+    if "TIME_RULE" in th:
+        if th["TIME_RULE"] not in TIME_RULES:
+            raise ValueError(f"TIME_RULE must be one of {TIME_RULES}, got {th['TIME_RULE']!r}")
+        if th["T_MIN"] < 0 or th["ADAPT_K"] <= 0:
+            raise ValueError("Adaptive time rule needs T_MIN >= 0 and ADAPT_K > 0")
+        if not isinstance(th["ADAPT_N"], int) or th["ADAPT_N"] < 1:
+            raise ValueError("ADAPT_N must be a whole number of at least 1")
     if th["FAST_RULE"] not in FAST_RULES:
         raise ValueError(f"FAST_RULE must be one of {FAST_RULES}, got {th['FAST_RULE']!r}")
     if not 0 <= th["T_SOFT"] <= th["T_HARD"]:
@@ -271,15 +311,20 @@ def decide_pair(
     dh: int | None,
     dc: float | None,
     thresholds: dict | None = None,
+    t_soft: float | None = None,
 ) -> tuple[bool, str | None, str]:
     """
     Decide whether a boundary sits between two adjacent photos.
+
+    `t_soft` replaces T_SOFT for this pair; the adaptive time rule passes its
+    running pause threshold here. None uses T_SOFT.
 
     Returns (boundary, reason, rule). `reason` is None when there is no
     boundary. `rule` names the table row that decided, for tests and
     diagnostics: "1".."5", "visual_only", "time_only", or "no_data".
     """
     th = thresholds if thresholds is not None else THRESHOLDS
+    soft = th["T_SOFT"] if t_soft is None else t_soft
     has_time   = dt is not None
     has_visual = dh is not None and dc is not None
 
@@ -301,7 +346,7 @@ def decide_pair(
             return False, None, "2"      # long pause, same set resumed
         return True, "time_gap", "1"
 
-    if dt >= th["T_SOFT"]:
+    if dt >= soft:
         if dh >= th["H_LOW"] or dc >= th["C_LOW"]:
             return True, "time+visual", "3"
         return False, None, "5"
@@ -334,6 +379,26 @@ def order_photos(features: list[dict]) -> tuple[list[dict], str]:
         ordered = sorted(features, key=lambda f: (f["captured_at_ms"], f["photo_id"]))
         return ordered, "capture_time"
     return sorted(features, key=lambda f: f["photo_id"]), "filename"
+
+
+def _median(values: list[float]) -> float:
+    """Plain median (mean of the middle two for an even count), easy to port."""
+    v = sorted(values)
+    mid = len(v) // 2
+    return v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2
+
+
+def adaptive_pause(same_set_dts: list[float], th: dict) -> float:
+    """
+    The adaptive rule's pause threshold for the next pair.
+
+    `same_set_dts` holds the dt of every earlier pair the table decided was
+    same-set, in shooting order. With none yet, returns T_SOFT.
+    """
+    recent = same_set_dts[-th["ADAPT_N"]:]
+    if not recent:
+        return float(th["T_SOFT"])
+    return max(float(th["T_MIN"]), th["ADAPT_K"] * _median(recent))
 
 
 def _visual_distance(pair: dict) -> float:
@@ -411,12 +476,15 @@ def _split_large_groups(pairs: list[dict], boundaries: list[bool], th: dict) -> 
 
 
 def _boundary_info(pair: dict) -> dict:
-    return {
+    info = {
         "reason": pair["final_reason"],
         "dt_s":   None if pair["dt"] is None else round(pair["dt"], 3),
         "dh":     pair["dh"],
         "dc":     None if pair["dc"] is None else round(pair["dc"], 4),
     }
+    if "t_pause" in pair:
+        info["pause_s"] = pair["t_pause"]   # adaptive rule only: the threshold this gap was held to
+    return info
 
 
 def measure_pairs(ordered: list[dict]) -> list[dict]:
@@ -467,14 +535,22 @@ def group_measured(
                    Not modified.
     """
     th = resolve_thresholds(thresholds)
+    adaptive = th.get("TIME_RULE") == "adaptive"
 
     pairs: list[dict] = []
+    same_set_dts: list[float] = []
     for m in measured:
-        boundary, reason, rule = decide_pair(m["dt"], m["dh"], m["dc"], th)
-        pairs.append({
+        t_pause = adaptive_pause(same_set_dts, th) if adaptive else None
+        boundary, reason, rule = decide_pair(m["dt"], m["dh"], m["dc"], th, t_soft=t_pause)
+        pair = {
             "a": m["a"], "b": m["b"], "dt": m["dt"], "dh": m["dh"], "dc": m["dc"],
             "boundary": boundary, "reason": reason, "rule": rule,
-        })
+        }
+        if adaptive:
+            pair["t_pause"] = round(t_pause, 3)
+            if not boundary and m["dt"] is not None:
+                same_set_dts.append(m["dt"])
+        pairs.append(pair)
 
     boundaries = [p["boundary"] for p in pairs]
     _merge_small_groups(pairs, boundaries, th)

@@ -50,11 +50,15 @@ it did. Never show only a final number.
   run (<90s) and a formal Lighthouse PWA audit
 - **v2 "Full shoot" Phase A (CLI + evaluation): built, gate NOT yet passed.**
   `--mode shoot` groups an ordered shoot into sets and picks a winner per set.
-  The gate needs a hand-labelled answer key for the Wat Arun photos
-  (`input/wat_arun/`: 187 JPGs, DSC00001–DSC00190 with 00062/66/68 missing;
-  the engine proposes 30 sets). Build the key with `scripts/label_shoot.py`
-  (a labelling page that corrects the proposal; see eval/README.md). Thresholds
-  and `SHOOT_WEIGHTS` are still the plan's initial guesses. No API or frontend
+  The Wat Arun answer key is committed (`eval/wat_arun/answer_key.json`):
+  `input/wat_arun/` holds 187 JPGs (DSC00001–DSC00190 with 00062/66/68
+  missing), labelled as 36 sets; the engine proposes 30. The key was built with
+  `scripts/label_shoot.py`, a labelling page that corrects the proposal (see
+  eval/README.md). Thresholds and `SHOOT_WEIGHTS` are still the plan's initial
+  guesses; tuning candidates are in the eval report for the owner to choose.
+  Decided 2026-11-26 (V2-PLAN header): forced spread off in shoot mode (code
+  default not flipped yet), one set per synchronous request instead of the
+  jobs API (J9), and the results UI shows each set's top 3. No API or frontend
   work yet (Phase B). Design: `docs/V2-PLAN.md`; review and open decisions:
   `docs/V2-REVIEW.md`. Archetype 2 is now in scope for the CLI only.
 
@@ -136,11 +140,16 @@ For one long, ordered shoot (100–300 photos). Two steps:
    `GROUPING_VERSION`. `tests/fixtures/grouping_golden.json` is the contract
    the Phase B JS port must also reproduce; regenerate it with
    `tests/fixtures/make_grouping_golden.py` and bump the version on any change.
+   An optional adaptive time term (`TIME_RULE: "adaptive"`, knobs in
+   `ADAPTIVE_DEFAULTS`) is off by default and kept out of `THRESHOLDS`, so the
+   fixture and version are untouched unless it is adopted.
 2. **Score each group** (`core/shoot.py`): burst-mode face signals **and** one
    Gemini call for the whole group (`batch_size=len(group)`, shoot prompt
    addendum), ranked with `SHOOT_WEIGHTS` (8 axes). **No blur gate.** A group
    is atomic: scored or `failed`, never default scores; one failed group does
-   not stop the others.
+   not stop the others. Gemini sees the photos as `photo_1`…`photo_N` (their
+   position), never filenames, and a reply naming the wrong photos is retried
+   (`strict_ids`); see LEARNINGS 2026-11-26.
 
 The set-mode Gemini prompt is unchanged and pinned by a hash test. The
 forced-spread rule can be switched off in shoot mode only (`--no-force-spread`),
@@ -259,6 +268,11 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory output/labeller
 # --stage grouping makes no Gemini calls; scores are cached in output/.
 PYTHONPATH=. ./venv/bin/python scripts/eval_shoot.py \
   --input input/wat_arun --key eval/wat_arun/answer_key.json --stage all
+
+# Compare weights on cached scores only (never calls Gemini)
+PYTHONPATH=. ./venv/bin/python scripts/eval_shoot.py \
+  --input input/wat_arun --key eval/wat_arun/answer_key.json \
+  --stage oracle --spread off --cached-only
 
 # Tests and lint (dev tools: pip install -r requirements-dev.txt)
 PYTHONPATH=. ./venv/bin/pytest -q

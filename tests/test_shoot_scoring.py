@@ -101,8 +101,9 @@ def test_prompt_mode_is_validated():
 def fake_gemini(monkeypatch):
     calls = {"batches": [], "system": []}
 
-    def fake_score_batch(client, config, image_paths, photo_ids, retries=2):
+    def fake_score_batch(client, config, image_paths, photo_ids, retries=2, strict_ids=False):
         calls["batches"].append(list(photo_ids))
+        calls.setdefault("strict_ids", []).append(strict_ids)
         calls["system"].append(config.system_instruction)
         return [
             {"photo_id": pid, "subject_1_expression": 7, "subject_2_expression": None,
@@ -232,6 +233,80 @@ def test_score_group_fails_whole_group_when_gemini_drops_a_photo(monkeypatch, fa
         shoot.score_group(photos)
 
 
+def test_score_group_labels_photos_by_position_and_maps_them_back(monkeypatch, fake_gemini):
+    _stub_burst(monkeypatch)
+    real = score_vision._score_batch
+
+    def reply_in_rank_order(*args, **kwargs):
+        rows = real(*args, **kwargs)
+        rows[0]["notes"] = "warmer smile than photo_3 and photo_2"
+        return rows[::-1]                     # Gemini often lists the best photo first
+
+    monkeypatch.setattr(score_vision, "_score_batch", reply_in_rank_order)
+    photos = [{"photo_id": f"DSC0000{n}.JPG", "path": f"/x/{n}.jpg"} for n in range(5, 10)]
+    scored = shoot.score_group(photos)
+
+    assert fake_gemini["batches"] == [["photo_1", "photo_2", "photo_3", "photo_4", "photo_5"]]
+    assert fake_gemini["strict_ids"] == [True]
+    assert [p["photo_id"] for p in scored["photos"]] == [p["photo_id"] for p in photos]
+    assert [p["relative_rank"] for p in scored["photos"]] == [1, 2, 3, 4, 5]
+    assert scored["photos"][0]["notes"] == "warmer smile than DSC00007.JPG and DSC00006.JPG"
+
+
+_ROW = ('{{"photo_id": "{}", "subject_1_expression": 7, "subject_2_expression": null, '
+        '"camera_engagement": 8, "composition": 6, "subject_focus": 7, "relative_rank": {}, '
+        '"notes": "ok"}}')
+
+
+def _reply(*ids):
+    return "[" + ", ".join(_ROW.format(pid, i) for i, pid in enumerate(ids, 1)) + "]"
+
+
+def test_strict_ids_reject_a_reply_that_names_the_wrong_photos():
+    expected = ["photo_1", "photo_2", "photo_3"]
+    assert len(score_vision._parse_scores(_reply("photo_3", "photo_1", "photo_2"), 3, expected)) == 3
+    with pytest.raises(ValueError, match=r"missing \['photo_3'\], unexpected \['DSC00003.JPG'\]"):
+        score_vision._parse_scores(_reply("photo_1", "photo_2", "DSC00003.JPG"), 3, expected)
+    with pytest.raises(ValueError, match="2 objects for 3 photos"):
+        score_vision._parse_scores(_reply("photo_1", "photo_2"), 2, expected)
+    with pytest.raises(ValueError, match="wrong photos"):
+        score_vision._parse_scores(_reply("photo_1", "photo_1", "photo_2"), 3, expected)
+    # Without expected ids (set mode) the reply is not checked, as before.
+    assert len(score_vision._parse_scores(_reply("photo_1", "x"), 2)) == 2
+
+
+class _FakeClient:
+    """Returns the given reply texts in turn."""
+
+    def __init__(self, *texts):
+        self.texts, self.calls = list(texts), 0
+        self.models = self
+
+    def generate_content(self, model, contents, config):
+        self.calls += 1
+        return type("Response", (), {"text": self.texts.pop(0)})()
+
+
+def test_strict_ids_retry_a_mislabelled_reply(monkeypatch, tmp_path):
+    monkeypatch.setattr(score_vision.time, "sleep", lambda s: None)
+    image = tmp_path / "a.jpg"
+    image.write_bytes(b"\xff\xd8")
+    paths, ids = [image, image], ["photo_1", "photo_2"]
+
+    client = _FakeClient(_reply("photo_1", "DSC00002.JPG"), _reply("photo_2", "photo_1"))
+    rows = score_vision._score_batch(client, None, paths, ids, strict_ids=True)
+    assert client.calls == 2 and sorted(r["photo_id"] for r in rows) == ids
+
+    client = _FakeClient(*[_reply("photo_1", "DSC00002.JPG")] * 3)
+    with pytest.raises(RuntimeError, match="after 3 attempts"):
+        score_vision._score_batch(client, None, paths, ids, strict_ids=True)
+
+    # Set mode keeps today's behaviour: one call, reply accepted as it is.
+    client = _FakeClient(_reply("photo_1", "DSC00002.JPG"))
+    assert len(score_vision._score_batch(client, None, paths, ids)) == 2
+    assert client.calls == 1
+
+
 def test_run_shoot_keeps_going_when_one_group_fails(monkeypatch, fake_gemini):
     from core import group as group_module
 
@@ -245,14 +320,15 @@ def test_run_shoot_keeps_going_when_one_group_fails(monkeypatch, fake_gemini):
 
     real = score_vision._score_batch
 
-    def flaky(client, config, image_paths, photo_ids, retries=2):
-        if "DSC0003.JPG" in photo_ids:
+    def flaky(client, config, image_paths, photo_ids, retries=2, strict_ids=False):
+        if len(image_paths) == 3 and image_paths[0] == "/x3":
             raise RuntimeError("Gemini scoring failed after 3 attempts")
-        return real(client, config, image_paths, photo_ids, retries)
+        return real(client, config, image_paths, photo_ids, retries, strict_ids)
 
     monkeypatch.setattr(score_vision, "_score_batch", flaky)
 
-    photos = [{"photo_id": f["photo_id"], "path": "/x", "original_path": "/y"} for f in features]
+    photos = [{"photo_id": f["photo_id"], "path": f"/x{i}", "original_path": "/y"}
+              for i, f in enumerate(features)]
     output = shoot.run_shoot(photos)
 
     assert output["mode"] == "shoot" and output["weights"] == SHOOT_WEIGHTS

@@ -102,6 +102,42 @@ def test_threshold_sweep_finds_the_better_setting():
     by_value = {v["value"]: v for v in sweep["marginals"]["T_HARD"]}
     assert by_value[30]["best"] == 0 and by_value[90]["best"] == 1
     assert all(e["T_HARD"] == 30 for e in sweep["best_examples"])
+    # Both MIN_GROUP values reach the best; the default (2) changes less.
+    assert sweep["closest_best"] == {"T_HARD": 30, "MIN_GROUP": 2}
+    assert sweep["closest_changes"] == 1
+
+
+def _paced_shoot():
+    """
+    Two sets shot at a steady 2 s pace, split by a 10 s pause with a framing
+    change. Too quick for the fixed T_SOFT of 20 s, but 5x the pace.
+    """
+    steps = [(2, 3, 0.03)] * 4 + [(10, 20, 0.05)] + [(2, 3, 0.03)] * 4
+    measured = [{"a": IDS[i], "b": IDS[i + 1], "dt": dt, "dh": dh, "dc": dc}
+                for i, (dt, dh, dc) in enumerate(steps)]
+    return IDS, measured, [IDS[:5], IDS[5:]]
+
+
+def test_time_rule_comparison(monkeypatch):
+    monkeypatch.setattr(ev, "FIXED_TIME_GRID", {"T_SOFT": [15, 20]})
+    monkeypatch.setattr(ev, "ADAPTIVE_TIME_GRID",
+                        {"TIME_RULE": ["adaptive"], "T_MIN": [4, 8], "ADAPT_K": [4], "ADAPT_N": [10]})
+    monkeypatch.setattr(ev, "TIME_RULE_SHARED", {"H_LOW": [14, 65]})
+    ids, measured, truth = _paced_shoot()
+    cmp = ev.compare_time_rules(ids, measured, truth, "capture_time")
+
+    assert cmp["default"]["metrics"]["corrections"] == 1
+    assert cmp["fixed"]["metrics"]["corrections"] == 1         # no T_SOFT here catches 10 s
+    assert cmp["adaptive"]["metrics"]["corrections"] == 0
+    assert cmp["adaptive"]["chosen"] == {"H_LOW": 14, "TIME_RULE": "adaptive", "T_MIN": 8,
+                                         "ADAPT_K": 4, "ADAPT_N": 10}
+    assert cmp["fixed"]["sweep"]["combos"] == 4 and cmp["adaptive"]["sweep"]["combos"] == 4
+
+    lines: list[str] = []
+    ev.report_time_rules(lines, cmp, ev.boundaries_of(truth))
+    text = "\n".join(lines)
+    assert "| Best adaptive | 4 |" in text
+    assert "| DSC0005 → DSC0006 | new set | 10 | 20 | 0.050 | missed | missed | ✓ (pause 8 s) |" in text
 
 
 # ---------------------------------------------------------------------------
@@ -256,3 +292,53 @@ def test_cached_sets_are_not_rescored(tmp_path, monkeypatch):
 
     ev.score_sets(tmp_path, sets[:1], cache, False, 0)           # spread off is a separate variant
     assert calls[4:] == [["a1", "a2"]]
+
+
+def test_cached_only_never_scores_and_slices_split_sets(tmp_path, monkeypatch):
+    from core import shoot
+
+    def no_gemini(*args, **kwargs):
+        raise AssertionError("cached_only must not score")
+
+    monkeypatch.setattr(shoot, "score_group", no_gemini)
+    cache = ev.Cache(tmp_path / "scores.json")
+    variant = ev.variant_key(True)
+    whole = ["p1", "p2", "p3", "p4", "p5"]
+    cache.put_scores(variant, 0, whole, {"photos": [_photo(p, rr=i) for i, p in enumerate(whole, 1)],
+                                         "gemini_latency_s": 3.0, "photo_count": 5})
+
+    # The key later split the set at p3; p9 was never scored.
+    sets = [["p1", "p2"], ["p3", "p4", "p5"], ["p9"], ["p2", "p4"]]
+    got = ev.score_sets(tmp_path, sets, cache, True, 0, cached_only=True)
+    assert [p["photo_id"] for p in got[1]["photos"]] == ["p3", "p4", "p5"]
+    assert got[1]["sliced_from"] == 5 and "gemini_latency_s" not in got[1]
+    assert got[0]["photo_count"] == 2
+    assert got[2] is None and got[3] is None                    # not contiguous: no slice
+    assert ev.score_sets(tmp_path, [whole], cache, True, 0, cached_only=True)[0]["gemini_latency_s"] == 3.0
+    assert ev.score_sets(tmp_path, sets[:1], cache, True, 1, cached_only=True) == [None]   # other run
+
+
+def test_weight_candidates_prefer_the_simplest_within_range(monkeypatch):
+    fs, ex = "face_sharpness", "expression"
+    monkeypatch.setattr(ev, "WEIGHT_CANDIDATES", [
+        ev._weights(face_sharpness=0.5, expression=0.5),
+        ev._weights(expression=1.0),
+        ev._weights(face_sharpness=1.0),
+    ])
+    # Set 1: the pick has the best expression. Set 2: the best face. Set 3: both.
+    truth = [{"set": i, "pick": f"s{i}a", "acceptable": []} for i in (1, 2, 3)]
+
+    def group(i, a, b):
+        return {"photos": [
+            {**_photo(f"s{i}a", rr=1), fs: a[0], ex: a[1]},
+            {**_photo(f"s{i}b", rr=2), fs: b[0], ex: b[1]},
+        ]}
+
+    run = [group(1, (5, 9), (6, 5)), group(2, (9, 5), (5, 6)), group(3, (9, 9), (5, 5))]
+    c = ev.candidate_metrics(truth, [run, run])
+    assert c["sets"] == 3
+    top1 = [r["top1"][0] for r in c["rows"]]
+    assert top1 == [pytest.approx(1.0), pytest.approx(2 / 3), pytest.approx(2 / 3)]
+    assert [r["within_range"] for r in c["rows"]] == [True, False, False]
+    assert c["simplest"]["weights"] == ev.WEIGHT_CANDIDATES[0]
+    assert c["relative_rank"]["top1"] == [1.0, 1.0]           # rr=1 is always the pick here

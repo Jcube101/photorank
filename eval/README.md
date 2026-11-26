@@ -90,8 +90,8 @@ PYTHONPATH=. ./venv/bin/python scripts/eval_shoot.py \
 
 | Stage | Calls Gemini? | What it reports |
 |---|---|---|
-| `grouping` | No | Boundary metrics, distance distributions, threshold sweep |
-| `oracle` | Yes: sets × `--runs` × spread variants | Pick accuracy on the true sets, ablations, weight sweep, diagnostics |
+| `grouping` | No | Boundary metrics, distance distributions, threshold sweep, fixed vs adaptive time rule |
+| `oracle` | Yes: sets × `--runs` × spread variants | Pick accuracy on the true sets, ablations, weight candidates, weight sweep, diagnostics |
 | `e2e` | Yes: once per predicted group | Predicted groups, then predicted winners |
 | `all` | Yes | Everything |
 
@@ -101,3 +101,24 @@ new Gemini calls. Delete that file to re-score from scratch. The report goes to
 `output/eval_<shoot>_report.md`. Both are git-ignored.
 
 Start with `--stage grouping`: it is free and validates the key.
+
+### Without Gemini: `--cached-only`
+
+```bash
+PYTHONPATH=. ./venv/bin/python scripts/eval_shoot.py \
+  --input input/wat_arun --key eval/wat_arun/answer_key.json \
+  --stage oracle --spread off --cached-only
+```
+
+`--cached-only` never calls Gemini, so weights can be compared on the scores
+already cached. A set the key splits after it was scored is re-ranked from the
+cached group that holds it, the same way the app re-ranks a split (V2-PLAN
+§10.4). Any other set that isn't cached is left out, and the report lists it.
+
+The weight-candidates table scores a few round weight sets from
+`WEIGHT_CANDIDATES` in `scripts/eval_shoot.py`. It uses the sets that have
+scores in every run. A candidate is "within range" when its min–max over runs
+overlaps the best candidate's on both top-1 and top-3. The report names the
+simplest such candidate. With about 30 sets, one set is worth 3 points, which
+is less than Gemini's run-to-run range, so prefer that candidate over the
+sweep's single best.
