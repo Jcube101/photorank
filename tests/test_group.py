@@ -8,10 +8,13 @@ import pytest
 
 from core import group
 from core.group import (
+    ADAPTIVE_DEFAULTS,
     GROUPING_VERSION,
     THRESHOLDS,
+    adaptive_pause,
     decide_pair,
     dhash_from_bgr,
+    group_measured,
     group_photos,
     hamming,
     hist_distance,
@@ -182,6 +185,88 @@ def test_groups_cover_every_photo_once_and_respect_size_limits():
     sizes = [len(g["photo_ids"]) for g in result["groups"]]
     assert max(sizes) <= 8 and min(sizes) >= 2      # no hard gaps -> no kept singletons
     assert [g["group_id"] for g in result["groups"]] == sorted(g["group_id"] for g in result["groups"])
+
+
+# ---------------------------------------------------------------------------
+# Adaptive time rule (optional, off by default)
+# ---------------------------------------------------------------------------
+
+ADAPTIVE = {"TIME_RULE": "adaptive", "T_MIN": 5, "ADAPT_K": 4, "ADAPT_N": 3}
+
+
+def _measured(steps):
+    """Pairs from (dt, dh, dc) steps, with photo ids p00, p01, ..."""
+    return [{"a": f"p{i:02d}", "b": f"p{i + 1:02d}", "dt": dt, "dh": dh, "dc": dc}
+            for i, (dt, dh, dc) in enumerate(steps)]
+
+
+def _ids(n):
+    return [f"p{i:02d}" for i in range(n)]
+
+
+def test_default_output_has_no_adaptive_keys():
+    result = group_measured(_ids(3), _measured([(2, 3, 0.03), (2, 3, 0.03)]))
+    assert result["thresholds"] == THRESHOLDS
+    assert all("t_pause" not in p for p in result["pairs"])
+    with_fixed = resolve_thresholds({"TIME_RULE": "fixed"})
+    assert with_fixed == {**THRESHOLDS, **ADAPTIVE_DEFAULTS}
+
+
+def test_adaptive_thresholds_are_validated():
+    with pytest.raises(ValueError, match="TIME_RULE"):
+        resolve_thresholds({"TIME_RULE": "auto"})
+    with pytest.raises(ValueError, match="ADAPT_N"):
+        resolve_thresholds({"TIME_RULE": "adaptive", "ADAPT_N": 0})
+    with pytest.raises(ValueError, match="ADAPT_K"):
+        resolve_thresholds({"TIME_RULE": "adaptive", "ADAPT_K": 0})
+    assert resolve_thresholds({"ADAPT_K": 6})["TIME_RULE"] == "fixed"
+
+
+def test_adaptive_pause_follows_the_recent_same_set_median():
+    th = resolve_thresholds(ADAPTIVE)
+    assert adaptive_pause([], th) == THRESHOLDS["T_SOFT"]         # no history yet
+    assert adaptive_pause([1, 1, 1], th) == 5                       # floor T_MIN
+    assert adaptive_pause([2, 3, 4], th) == 12                      # 4 x median 3
+    assert adaptive_pause([2, 4], th) == 12                         # even count: mean of the middle two
+    assert adaptive_pause([30, 30, 2, 3, 4], th) == 12              # only the last ADAPT_N count
+
+
+def test_adaptive_rule_splits_a_short_pause_with_a_visual_change():
+    # A steady 2 s pace, then a 10 s pause with a framing change (dh 20).
+    steps = [(2, 3, 0.03)] * 4 + [(10, 20, 0.05)] + [(2, 3, 0.03)] * 2
+    ids, measured = _ids(len(steps) + 1), _measured(steps)
+
+    fixed = group_measured(ids, measured)
+    assert len(fixed["groups"]) == 1                   # 10 s < T_SOFT 20: rule 4 needs dh and dc
+
+    adaptive = group_measured(ids, measured, ADAPTIVE)
+    assert [len(g["photo_ids"]) for g in adaptive["groups"]] == [5, 3]
+    pause = adaptive["pairs"][4]
+    assert (pause["t_pause"], pause["rule"], pause["reason"]) == (8, "3", "time+visual")
+    assert adaptive["groups"][1]["boundary_before"]["pause_s"] == 8
+
+
+def test_adaptive_rule_needs_the_visual_change_too():
+    steps = [(2, 3, 0.03)] * 4 + [(10, 3, 0.03)] + [(2, 3, 0.03)] * 2
+    result = group_measured(_ids(len(steps) + 1), _measured(steps), ADAPTIVE)
+    assert len(result["groups"]) == 1
+    assert result["pairs"][4]["rule"] == "5"
+
+
+def test_adaptive_history_counts_only_same_set_pairs():
+    # Two 60 s boundaries must not raise the pace estimate for the pair after them.
+    steps = [(2, 3, 0.03), (2, 3, 0.03), (60, 30, 0.4), (60, 30, 0.4), (2, 3, 0.03),
+             (9, 20, 0.05), (2, 3, 0.03)]
+    result = group_measured(_ids(len(steps) + 1), _measured(steps), {**ADAPTIVE, "MIN_GROUP": 1})
+    assert [p["t_pause"] for p in result["pairs"]] == [20, 8, 8, 8, 8, 8, 8]
+    assert [p["boundary"] for p in result["pairs"]] == [False, False, True, True, False, True, False]
+
+
+def test_adaptive_rule_leaves_missing_time_alone():
+    steps = [(2, 3, 0.03), (None, 20, 0.05), (2, 3, 0.03)]
+    result = group_measured(_ids(4), _measured(steps), ADAPTIVE)
+    assert result["pairs"][1]["rule"] == "visual_only"
+    assert result["pairs"][2]["t_pause"] == 8          # the None pair added nothing to the history
 
 
 # ---------------------------------------------------------------------------
