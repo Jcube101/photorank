@@ -319,18 +319,19 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
         )
     except EnvironmentError as exc:
         raise _reject(500, str(exc))
-    except RuntimeError as exc:
-        raise _reject(502, str(exc))
+    except RuntimeError:
+        # The exception text carries Gemini's raw reply, which describes the
+        # photos. Never log or return it (privacy rule 2).
+        raise _reject(502, f"Gemini scoring failed for {len(sharp_technical)} photo(s).")
     logger.info("[perf] gemini total: %.2fs (%d photos)", time.perf_counter() - _t, len(sharp_technical))
 
+    # score_photos returns exactly one row per photo or raises. If one is still
+    # missing, fail the request: never rank a set with a photo silently dropped.
     gemini_by_id = {s["photo_id"]: s for s in gemini_scores}
-    merged: list[dict] = []
-    for tech in sharp_technical:
-        pid = tech["photo_id"]
-        if pid not in gemini_by_id:
-            logger.warning("no Gemini score for %s — skipping", pid)
-            continue
-        merged.append(_merge(tech, gemini_by_id[pid]))
+    missing = sum(1 for t in sharp_technical if t["photo_id"] not in gemini_by_id)
+    if missing:
+        raise _reject(502, f"Gemini returned no score for {missing} of {len(sharp_technical)} photo(s).")
+    merged = [_merge(tech, gemini_by_id[tech["photo_id"]]) for tech in sharp_technical]
 
     if not merged:
         raise _reject(500, "Gemini returned no scoreable results.")

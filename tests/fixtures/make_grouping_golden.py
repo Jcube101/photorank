@@ -79,11 +79,11 @@ def _cases() -> list[dict]:
             ("0003", 120,    30, 0.40),   # 1: long pause, different
             ("0004", 150,    4,  0.05),   # 2: long pause, near-identical -> same set
             ("0005", 90,     7,  0.05),   # 1: dt == T_HARD, dh just over H_SAME
-            ("0006", 45,     14, 0.05),   # 3: medium pause, dh == H_LOW
+            ("0006", 45,     10, 0.05),   # 3: medium pause, dh == H_LOW
             ("0007", 45,     5,  0.25),   # 3: medium pause, colour change only
-            ("0008", 45,     13, 0.15),   # 5: medium pause, both below LOW
-            ("0009", 20,     20, 0.05),   # 3: dt == T_SOFT counts as medium
-            ("0010", 19.999, 20, 0.05),   # 5: just under T_SOFT, not a strong change
+            ("0008", 45,     9,  0.10),   # 5: medium pause, both below LOW
+            ("0009", 15,     20, 0.05),   # 3: dt == T_SOFT counts as medium
+            ("0010", 14.999, 20, 0.05),   # 5: just under T_SOFT, not a strong change
             ("0011", 3,      30, 0.40),   # 4: quick, strong on both signals
             ("0012", 3,      30, 0.10),   # 5: quick, structure only (FAST_RULE=and)
             ("0013", 3,      10, 0.45),   # 5: quick, colour only (FAST_RULE=and)
@@ -220,9 +220,9 @@ def _cases() -> list[dict]:
     # -- Missing data (§7.4, review G1). --------------------------------------
     no_time = _photos([
         ("0001",),
-        ("0002", 0, 14, 0.21),   # visual_only: dh == H_LOW, dc just over C_LOW -> boundary
-        ("0003", 0, 20, 0.15),   # colour below C_LOW -> no boundary
-        ("0004", 0, 13, 0.40),   # structure below H_LOW -> no boundary
+        ("0002", 0, 10, 0.16),   # visual_only: dh == H_LOW, dc just over C_LOW -> boundary
+        ("0003", 0, 20, 0.10),   # colour below C_LOW -> no boundary
+        ("0004", 0, 9,  0.40),   # structure below H_LOW -> no boundary
         ("0005", 0, 30, 0.40),   # boundary
     ], source="none")
     for photo in no_time:

@@ -48,18 +48,21 @@ it did. Never show only a final number.
   sessionStorage result persistence, manifest + service worker (offline shell)
 - Outstanding (non-blocking follow-ups, not gate items): timed 20-photo on-device
   run (<90s) and a formal Lighthouse PWA audit
-- **v2 "Full shoot" Phase A (CLI + evaluation): built, gate NOT yet passed.**
+- **v2 "Full shoot" Phase A (CLI + evaluation): Complete. Gate passed 2026-11-26.**
   `--mode shoot` groups an ordered shoot into sets and picks a winner per set.
   The Wat Arun answer key is committed (`eval/wat_arun/answer_key.json`):
   `input/wat_arun/` holds 187 JPGs (DSC00001–DSC00190 with 00062/66/68
-  missing), labelled as 36 sets; the engine proposes 30. The key was built with
+  missing), labelled as 36 sets. The key was built with
   `scripts/label_shoot.py`, a labelling page that corrects the proposal (see
-  eval/README.md). Thresholds and `SHOOT_WEIGHTS` are still the plan's initial
-  guesses; tuning candidates are in the eval report for the owner to choose.
-  Decided 2026-11-26 (V2-PLAN header): forced spread off in shoot mode (code
-  default not flipped yet), one set per synchronous request instead of the
-  jobs API (J9), and the results UI shows each set's top 3. No API or frontend
-  work yet (Phase B). Design: `docs/V2-PLAN.md`; review and open decisions:
+  eval/README.md). Gate numbers: 3 grouping corrections; oracle top-1 44% and
+  top-3 79%, both just under target but within Gemini's run-to-run range and
+  accepted by the owner (ROADMAP, V2-PLAN §11). Defaults set from the
+  evaluation: `T_SOFT` 15 s, `H_LOW` 10, `C_LOW` 0.15 (`GROUPING_VERSION` 2);
+  `SHOOT_WEIGHTS` face_sharpness 0.1, expression / subject_focus /
+  composition 0.3 each; forced spread off in shoot mode. Also decided
+  2026-11-26: one set per synchronous request instead of the jobs API (J9),
+  and the results UI shows each set's top 3. **Next: Phase B** (API and
+  frontend for shoot mode); none of it is built yet. Design: `docs/V2-PLAN.md`; review and open decisions:
   `docs/V2-REVIEW.md`. Archetype 2 is now in scope for the CLI only.
 
 ---
@@ -151,9 +154,9 @@ For one long, ordered shoot (100–300 photos). Two steps:
    position), never filenames, and a reply naming the wrong photos is retried
    (`strict_ids`); see LEARNINGS 2026-11-26.
 
-The set-mode Gemini prompt is unchanged and pinned by a hash test. The
-forced-spread rule can be switched off in shoot mode only (`--no-force-spread`),
-for the Q6 evaluation.
+The set-mode Gemini prompt is unchanged and pinned by a hash test. Forced
+spread is **off** in shoot mode by default (Q6, decided 2026-11-26); set mode
+always uses it. `--force-spread` adds it back in shoot mode.
 
 ---
 
@@ -355,6 +358,11 @@ See SPECS.md Section 5 for the complete contract and top-level output wrapper fo
 - **What to ask for:** `subject_1_expression`, `subject_2_expression`, `camera_engagement`, `composition`, `subject_focus`, `relative_rank`, `notes` (Python computes `expression` from per-subject values)
 - **What NOT to ask:** sharpness, exposure, any technical quality assessment
 - **On JSON parse failure:** strip markdown fences, retry once after 1s
+- **Photo labels:** Gemini sees each photo as `photo_1` … `photo_k`, its position
+  in the batch, never its filename (in every mode). A reply that doesn't name
+  each photo exactly once is retried like a parse failure, then raises.
+  `score_photos()` returns one row per photo in input order, or raises: it never
+  drops a photo. See LEARNINGS 2026-11-26.
 - **On any failure after retries:** raise — do not assign default scores
 - **Concurrency:** Gemini batches run **concurrently** via a `ThreadPoolExecutor`
   in `score_vision.py` (batches are independent and network-bound, so total
@@ -473,7 +481,7 @@ These cannot be relaxed for any reason:
 - `core/score_tech.py:compute_technical_scores_batch()` — batch version
 - `core/score_burst.py:compute_burst_scores()` — face-region burst scoring; accepts `photo_id` override
 - `core/score_burst.py:compute_burst_scores_batch()` — batch version
-- `core/score_vision.py:score_photos()` — Gemini semantic scoring; accepts `photo_ids` list; set mode only
+- `core/score_vision.py:score_photos()` — Gemini semantic scoring (set and shoot modes); labels photos by position, returns one row per `photo_ids` entry in order, or raises
 - `core/rank.py:rank_photos()` — merge + weight + rank (set mode)
 - `core/rank.py:_rank_burst()` — apply BURST_WEIGHTS, sort by final_score (burst mode)
 - `core/profiles.py:PROFILES` — single source of truth for all profile weight dicts

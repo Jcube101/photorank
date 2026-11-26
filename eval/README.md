@@ -95,6 +95,10 @@ PYTHONPATH=. ./venv/bin/python scripts/eval_shoot.py \
 | `e2e` | Yes: once per predicted group | Predicted groups, then predicted winners |
 | `all` | Yes | Everything |
 
+`--spread` defaults to `off`, the shoot-mode default since Q6. `--spread both`
+scores both prompt variants and lists `off` first; the sweep, weight
+candidates, diagnostics and end-to-end sections use that first variant.
+
 Raw scores are cached in `output/eval_<shoot>_scores.json` as each set
 finishes, so re-running with other weights, or after an interruption, makes no
 new Gemini calls. Delete that file to re-score from scratch. The report goes to

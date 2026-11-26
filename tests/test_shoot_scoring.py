@@ -16,11 +16,20 @@ V1_SYSTEM_PROMPT_SHA256 = "ab4676c6725c16277607731e3c02dad12c01dba21f2cce3677660
 # Weights
 # ---------------------------------------------------------------------------
 
+# The plan's initial weights (§6.3), used by the §8.1 worked example below.
+INITIAL_SHOOT_WEIGHTS = {
+    "face_sharpness": 0.30, "expression": 0.30, "subject_focus": 0.10,
+    "composition": 0.10, "camera_engagement": 0.10, "exposure": 0.05,
+    "sharpness": 0.05, "face_exposure": 0.00,
+}
+
+
 def test_shoot_weights_match_the_plan():
+    # Chosen 2026-11-26 from the Wat Arun evaluation (V2-PLAN §6.3).
     assert SHOOT_WEIGHTS == {
-        "face_sharpness": 0.30, "expression": 0.30, "subject_focus": 0.10,
-        "composition": 0.10, "camera_engagement": 0.10, "exposure": 0.05,
-        "sharpness": 0.05, "face_exposure": 0.00,
+        "face_sharpness": 0.10, "expression": 0.30, "subject_focus": 0.30,
+        "composition": 0.30, "camera_engagement": 0.00, "exposure": 0.00,
+        "sharpness": 0.00, "face_exposure": 0.00,
     }
     assert set(SHOOT_WEIGHTS) == set(SHOOT_AXES) == set(profiles.SHOOT_AXIS_SOURCES)
     assert sum(SHOOT_WEIGHTS.values()) == pytest.approx(1.0)
@@ -157,7 +166,7 @@ def test_rank_group_matches_the_plan_example():
     # docs/V2-PLAN.md §8.1 worked example.
     photo = _scored("DSC01007.JPG", face_sharpness=8.41, expression=8)
     photo.update(sharpness=4.12, exposure=6.80, face_exposure=6.95)
-    ranked = shoot.rank_group([photo])
+    ranked = shoot.rank_group([photo], INITIAL_SHOOT_WEIGHTS)
     top = ranked[0]
     # 2.523 + 2.400 + 0.800 + 0.700 + 0.900 + 0.340 + 0.206 + 0.000
     assert top["final_score"] == 7.869
@@ -170,6 +179,13 @@ def test_rank_group_matches_the_plan_example():
     assert top["score_breakdown"]["expression"]["source"] == "gemini"
     assert top["score_breakdown"]["face_exposure"]["contribution"] == 0.0
     assert "final_score" not in photo            # input is not modified
+
+    # Today's defaults: 0.841 + 2.400 + 2.400 + 2.100; zero-weight axes add nothing
+    # but stay in the breakdown.
+    top = shoot.rank_group([photo])[0]
+    assert top["final_score"] == 7.741
+    assert list(top["score_breakdown"]) == SHOOT_AXES
+    assert top["score_breakdown"]["camera_engagement"]["contribution"] == 0.0
 
 
 def test_rank_group_orders_by_score_then_relative_rank():
@@ -341,3 +357,67 @@ def test_run_shoot_keeps_going_when_one_group_fails(monkeypatch, fake_gemini):
     assert failed["status"] == "failed" and "ranked" not in failed       # no default scores
     assert failed["error"]["code"] == "scoring_failed"
     shoot.print_summary(output)
+
+
+def test_shoot_mode_drops_forced_spread_by_default(monkeypatch, fake_gemini):
+    # V2-PLAN Q6, decided 2026-11-26: off in shoot mode, opt-in with --force-spread.
+    _stub_burst(monkeypatch)
+    photos = [{"photo_id": f"{i}.JPG", "path": f"/x/{i}.jpg"} for i in range(4)]
+    shoot.score_group(photos)
+    shoot.score_group(photos, force_spread=True)
+    assert "At least one photo must score" not in fake_gemini["system"][0]
+    assert "Do NOT invent differences" in fake_gemini["system"][0]
+    assert "At least one photo must score below 5" in fake_gemini["system"][1]
+    # Set mode always forces spread.
+    score_vision.score_photos(_paths(2))
+    assert "At least one photo must score below 5" in fake_gemini["system"][2]
+
+
+# ---------------------------------------------------------------------------
+# Position labels in every mode (set mode included)
+# ---------------------------------------------------------------------------
+
+def test_score_photos_labels_each_batch_by_position_and_maps_rows_back(monkeypatch, fake_gemini):
+    real = score_vision._score_batch
+
+    def remember_paths(client, config, image_paths, photo_ids, retries=2, strict_ids=False):
+        rows = real(client, config, image_paths, photo_ids, retries, strict_ids)
+        for row, path in zip(rows, image_paths, strict=True):
+            row["notes"] = f"scored {path}, better than photo_1"
+        return rows[::-1]                     # reply in any order
+
+    monkeypatch.setattr(score_vision, "_score_batch", remember_paths)
+    paths = _paths(20)
+    ids = [f"IMG_{4800 + i}.jpg" for i in range(20)]
+    scores = score_vision.score_photos(paths, photo_ids=ids)
+
+    # Set mode: batches of 8, each labelled by position within the batch.
+    assert sorted(fake_gemini["batches"], key=len) == [
+        [f"photo_{i}" for i in range(1, 5)],
+        [f"photo_{i}" for i in range(1, 9)],
+        [f"photo_{i}" for i in range(1, 9)],
+    ]
+    assert fake_gemini["strict_ids"] == [True, True, True]
+    assert all(not any(i in b for i in ids) for b in fake_gemini["batches"])   # no filenames sent
+    assert [s["photo_id"] for s in scores] == ids                               # input order
+    for i, s in enumerate(scores):
+        first_of_batch = ids[i - i % 8]
+        assert s["notes"] == f"scored {paths[i]}, better than {first_of_batch}"
+
+
+def test_score_photos_raises_rather_than_dropping_a_photo(monkeypatch, tmp_path):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(score_vision.time, "sleep", lambda s: None)
+    image = tmp_path / "a.jpg"
+    image.write_bytes(b"\xff\xd8")
+    client = _FakeClient(*[_reply("photo_1", "IMG_0002.jpg")] * 3)    # never names photo_2
+    monkeypatch.setattr(score_vision.genai, "Client", lambda api_key: client)
+
+    with pytest.raises(RuntimeError, match="after 3 attempts"):
+        score_vision.score_photos([image, image], photo_ids=["IMG_0001.jpg", "IMG_0002.jpg"])
+    assert client.calls == 3
+
+    client.texts = [_reply("photo_1", "IMG_0002.jpg"), _reply("photo_2", "photo_1")]
+    client.calls = 0
+    scores = score_vision.score_photos([image, image], photo_ids=["IMG_0001.jpg", "IMG_0002.jpg"])
+    assert client.calls == 2 and [s["photo_id"] for s in scores] == ["IMG_0001.jpg", "IMG_0002.jpg"]

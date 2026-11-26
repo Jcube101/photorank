@@ -232,9 +232,10 @@ def main() -> None:
         help="Process all images regardless of sharpness",
     )
     parser.add_argument(
-        "--no-force-spread",
+        "--force-spread",
         action="store_true",
-        help="Shoot mode only: drop the forced score-spread rule from the Gemini prompt",
+        help=("Shoot mode only: add the forced score-spread rule to the Gemini prompt "
+              "(off by default in shoot mode; set mode always uses it)"),
     )
     parser.add_argument(
         "--output", "-o",
@@ -344,7 +345,7 @@ def main() -> None:
         elif args.mode == "shoot":
             from core.shoot import print_summary, run_shoot
 
-            output_data = run_shoot(photos, force_spread=not args.no_force_spread)
+            output_data = run_shoot(photos, force_spread=args.force_spread)
             print(f"[perf] PIPELINE TOTAL: {time.perf_counter() - _perf_t0:.2f}s", file=sys.stderr)
             print_summary(output_data)
 
@@ -409,14 +410,12 @@ def main() -> None:
             print(f"[perf] gemini total: {time.perf_counter() - _t:.2f}s", file=sys.stderr)
             print(f"[perf] PIPELINE TOTAL: {time.perf_counter() - _perf_t0:.2f}s", file=sys.stderr)
 
+            # score_photos returns one row per photo or raises; never drop one.
             gemini_by_id = {s["photo_id"]: s for s in gemini_scores}
-            merged: list[dict] = []
-            for tech in sharp_technical:
-                pid = tech["photo_id"]
-                if pid not in gemini_by_id:
-                    print(f"[rank] warning: no Gemini score for {pid}, skipping", file=sys.stderr)
-                    continue
-                merged.append(_merge(tech, gemini_by_id[pid]))
+            missing = [t["photo_id"] for t in sharp_technical if t["photo_id"] not in gemini_by_id]
+            if missing:
+                raise RuntimeError(f"Gemini returned no score for {missing}")
+            merged = [_merge(tech, gemini_by_id[tech["photo_id"]]) for tech in sharp_technical]
 
             ranked = rank_photos(merged, weights)
             _print_summary(ranked, blurry_ids)

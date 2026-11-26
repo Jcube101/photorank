@@ -177,15 +177,58 @@ serving (frontend + API on one hostname) means no CORS preflight issue with
 
 ---
 
+## v2 — Full shoot mode (Archetype 2)
+
+One long, ordered shoot (100–300 photos) → contiguous sets → a pick per set.
+Design and gates: `docs/V2-PLAN.md` (§11); review: `docs/V2-REVIEW.md`.
+
+### Phase A — Grouping and shoot scoring engine (CLI + evaluation) ✓ COMPLETE
+
+- [x] `core/group.py`: capture time, dHash, HSV histogram, the §7.3 decision table, post-pass, boundary reasons; golden fixture for the Phase B JS port
+- [x] `core/shoot.py` + `--mode shoot`: face signals and one Gemini call per set, `SHOOT_WEIGHTS`
+- [x] `scripts/eval_shoot.py` evaluation harness with a score cache; `scripts/label_shoot.py` labelling page
+- [x] Wat Arun answer key (`eval/wat_arun/answer_key.json`, 187 photos, 36 sets)
+
+**Phase A gate:** ✓ Passed — 2026-11-26. Measured on Wat Arun with the chosen
+defaults, forced spread off, 3 Gemini runs:
+- Grouping: **3 corrections** (target ≤ 3), boundary F1 0.96, exact-set match 86%.
+- Oracle top-1 **44%** (42–47% over runs): below the 50% target, within
+  Gemini's run-to-run range, **accepted by the owner**.
+- Oracle top-3 **79%** (78–81%): 1 point below the 80% target, within
+  run-to-run range, **accepted by the owner**.
+- The owner first accepted on the 34-set figures (top-1 46%, top-3 81%),
+  measured before two sets could be scored; with all 36 scored, the numbers
+  above are the record.
+
+**Defaults chosen (2026-11-26):**
+- Grouping: fixed time rule with `T_SOFT` 15 s, `H_LOW` 10, `C_LOW` 0.15, other
+  thresholds unchanged (`GROUPING_VERSION` 2). The adaptive time rule is available, off.
+- `SHOOT_WEIGHTS`: face_sharpness 0.1, expression 0.3, subject_focus 0.3,
+  composition 0.3, all other axes 0.
+- Forced spread off in shoot mode (`--force-spread` adds it back).
+
+Also decided 2026-11-26: one set per synchronous request instead of a jobs API
+(V2-REVIEW J9), and results show each set's top 3 for the user to choose from.
+
+### Phase B — Full shoot flow on the phone (read-only sets) — NEXT
+
+See `docs/V2-PLAN.md` §11. §9 (API) is to be rewritten for the per-set
+request first.
+
+### Phase C — Boundary correction and refinement
+
+See `docs/V2-PLAN.md` §11.
+
+---
+
 ## Future — Not Scoped
 
 These are being tracked but have no timeline or design yet. They do not
 influence the current architecture.
 
 **v2 — Full-day bulk cull (Archetype 2)**
-Get from 200 photos to a post-ready shortlist. Requires moment grouping
-(temporal clustering or visual similarity), best-of-group selection, and a UI
-designed for a longer session, not just a quick burst review.
+Now scoped as "Full shoot mode" above (Phase A complete). Unordered or
+multi-day libraries remain unscoped.
 
 **Native apps**
 React Native wrapper for iOS and Android. Likely post-v2.
