@@ -99,7 +99,7 @@ def test_best_combined_when_the_winner_tops_no_axis():
     assert _notes({"photos": photos, "subset": False})[0] == "Best combined score in this set."
 
 
-def test_scope_when_the_blur_gate_left_photos_out():
+def test_scope_when_photos_were_left_out():
     notes = _notes(_burst((8.9, 7.6, 6.1, 6.4), (8.4, 7.7, 6.1, 6.4), subset=True))
     assert notes[0] == "Sharpest face of the 2 ranked."
     assert _notes(_burst((8.9, 7.6, 6.1, 6.4)))[0] == "The only photo ranked."

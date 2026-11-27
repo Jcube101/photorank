@@ -38,7 +38,7 @@ Usage:
   python core/rank.py --profile family
   python core/rank.py --mode burst --input /path/to/burst_set
   python core/rank.py --mode shoot --input /path/to/shoot
-  python core/rank.py --input /path/to/photos --profile portrait --blur-threshold 80
+  python core/rank.py --input /path/to/photos --profile portrait
   python core/rank.py --profile custom \\
       --weights '{"sharpness":0.2,"exposure":0.1,"expression":0.25,"composition":0.2,"subject_focus":0.25,"camera_engagement":0.05}'
   python core/rank.py --profile family --output output/results.json
@@ -186,7 +186,7 @@ def rank_photos(
     return ranked
 
 
-def _print_summary(ranked: list[dict], blurry_ids: list[str]) -> None:
+def _print_summary(ranked: list[dict]) -> None:
     print("\n=== PhotoRank Results ===\n", file=sys.stderr)
     for photo in ranked:
         print(
@@ -194,10 +194,6 @@ def _print_summary(ranked: list[dict], blurry_ids: list[str]) -> None:
             f"  score={photo['final_score']:.3f}  — {photo['notes']}",
             file=sys.stderr,
         )
-    if blurry_ids:
-        print(f"\n  Skipped (blurry): {len(blurry_ids)} photo(s)", file=sys.stderr)
-        for name in blurry_ids:
-            print(f"    {name}", file=sys.stderr)
     print(file=sys.stderr)
 
 
@@ -240,18 +236,6 @@ def main() -> None:
             "All six axes required: sharpness, exposure, expression, "
             "composition, subject_focus, camera_engagement"
         ),
-    )
-    parser.add_argument(
-        "--blur-threshold", "-b",
-        type=float,
-        default=100.0,
-        help="Set mode: Laplacian variance threshold, images below this are skipped "
-             "(default: 100). Burst mode ranks every photo.",
-    )
-    parser.add_argument(
-        "--no-blur-filter",
-        action="store_true",
-        help="Process all images regardless of sharpness",
     )
     parser.add_argument(
         "--force-spread",
@@ -367,40 +351,17 @@ def main() -> None:
                 print("[rank] no images could be scored.", file=sys.stderr)
                 sys.exit(1)
 
-            blur_gate_bypassed = False
-            blurry_ids = []
-            if args.no_blur_filter:
-                sharp_technical = all_technical
-            else:
-                sharp_technical  = [t for t in all_technical if t["blur_raw"] >= args.blur_threshold]
-                blurry_technical = [t for t in all_technical if t["blur_raw"] <  args.blur_threshold]
-                blurry_ids       = [t["photo_id"] for t in blurry_technical]
-                print(
-                    f"[rank] {len(sharp_technical)} sharp, {len(blurry_technical)} blurry "
-                    f"(threshold={args.blur_threshold})",
-                    file=sys.stderr,
-                )
-                # Gate thins the set before Gemini; it must not refuse the whole
-                # batch. If nothing clears the threshold, score everything.
-                if not sharp_technical:
-                    print(
-                        f"[rank] all {len(all_technical)} image(s) below blur threshold "
-                        f"({args.blur_threshold}); scoring all anyway (gate bypassed).",
-                        file=sys.stderr,
-                    )
-                    sharp_technical    = all_technical
-                    blurry_ids         = []
-                    blur_gate_bypassed = True
-
+            # Every readable photo goes to Gemini and is ranked: no blur gate.
+            # Sharpness is already a weighted axis (LEARNINGS 2026-11-27).
             print(
-                f"[rank] scoring {len(sharp_technical)} photo(s) via Gemini "
+                f"[rank] scoring {len(all_technical)} photo(s) via Gemini "
                 f"(profile={args.profile})...",
                 file=sys.stderr,
             )
             _t = time.perf_counter()
             gemini_scores = score_photos(
-                [t["path"] for t in sharp_technical],
-                photo_ids=[t["photo_id"] for t in sharp_technical],
+                [t["path"] for t in all_technical],
+                photo_ids=[t["photo_id"] for t in all_technical],
                 profile=args.profile,
             )
             print(f"[perf] gemini total: {time.perf_counter() - _t:.2f}s", file=sys.stderr)
@@ -408,24 +369,21 @@ def main() -> None:
 
             # score_photos returns one row per photo or raises; never drop one.
             gemini_by_id = {s["photo_id"]: s for s in gemini_scores}
-            missing = [t["photo_id"] for t in sharp_technical if t["photo_id"] not in gemini_by_id]
+            missing = [t["photo_id"] for t in all_technical if t["photo_id"] not in gemini_by_id]
             if missing:
                 raise RuntimeError(f"Gemini returned no score for {missing}")
-            merged = [_merge(tech, gemini_by_id[tech["photo_id"]]) for tech in sharp_technical]
+            merged = [_merge(tech, gemini_by_id[tech["photo_id"]]) for tech in all_technical]
 
             ranked = rank_photos(merged, weights)
-            _print_summary(ranked, blurry_ids)
+            _print_summary(ranked)
 
             output_data = {
-                "mode":               "set",
-                "profile":            args.profile,
-                "weights":            weights,
-                "blur_threshold":     None if args.no_blur_filter else args.blur_threshold,
-                "blur_gate_bypassed": blur_gate_bypassed,
-                "total_photos":       len(photos),
-                "scored_photos":      len(merged),
-                "skipped_blurry":     len(blurry_ids),
-                "ranked":             ranked,
+                "mode":          "set",
+                "profile":       args.profile,
+                "weights":       weights,
+                "total_photos":  len(photos),
+                "scored_photos": len(merged),
+                "ranked":        ranked,
             }
 
         # ------------------------------------------------------------------

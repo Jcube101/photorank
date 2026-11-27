@@ -35,7 +35,6 @@ from core.score_burst import compute_burst_scores
 from core.score_tech import compute_technical_scores
 from core.score_vision import score_photos
 
-_BLUR_THRESHOLD           = 100.0
 _BURST_MAX_PHOTOS         = 6
 _BURST_TIMESTAMP_WINDOW_S = 10
 _VALID_PROFILES           = set(PROFILES.keys()) | {"custom"}
@@ -320,9 +319,7 @@ async def rank_endpoint(
 # dropped them), LEARNINGS 2026-11-27. Reasons:
 #   "unreadable"  ingest couldn't decode it
 #   "unscorable"  scoring raised on it
-#   "blurry"      set mode only: below the blur threshold, with its blur_raw
-#                 (only when the gate thinned the set; when it is bypassed,
-#                 everything ranks). Burst mode has no blur gate.
+# Neither mode has a blur gate: every readable, scorable photo is ranked.
 
 def _left_out(upload_info: list[tuple[Path, str]], photos: list[dict], output: dict) -> list[dict]:
     """The scoring routine's left_out, plus uploads ingest dropped, in upload order."""
@@ -340,11 +337,6 @@ def _left_out(upload_info: list[tuple[Path, str]], photos: list[dict], output: d
             # is still reported (none should be).
             left_out.append(by_id.get(photo_id, {"photo_id": photo_id, "reason": "unscorable"}))
     return left_out
-
-
-def _blurry(scores: list[dict]) -> list[dict]:
-    return [{"photo_id": s["photo_id"], "reason": "blurry", "blur_raw": round(s["blur_raw"], 1)}
-            for s in scores if s["blur_raw"] < _BLUR_THRESHOLD]
 
 
 # ---------------------------------------------------------------------------
@@ -393,24 +385,14 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
     if not all_technical:
         raise _reject(422, "No images could be scored.")
 
-    sharp_technical = [t for t in all_technical if t["blur_raw"] >= _BLUR_THRESHOLD]
-    blurry_ids      = [t["photo_id"] for t in all_technical if t["blur_raw"] < _BLUR_THRESHOLD]
-
-    # Gate thins the set before Gemini; it must not refuse the whole batch. If
-    # nothing clears the threshold, score everything rather than rejecting.
-    blur_gate_bypassed = not sharp_technical
-    if blur_gate_bypassed:
-        logger.warning(
-            "set: all %d image(s) below blur threshold (%.1f); scoring all anyway",
-            len(all_technical), _BLUR_THRESHOLD,
-        )
-        sharp_technical = all_technical
-
+    # Every readable photo goes to Gemini and is ranked: there is no blur gate.
+    # Sharpness is already a weighted axis, and a fixed blur_raw cut does not
+    # transfer across lighting, scene and image size (LEARNINGS 2026-11-27).
     _t = time.perf_counter()
     try:
         gemini_scores = score_photos(
-            [t["path"] for t in sharp_technical],
-            photo_ids=[t["photo_id"] for t in sharp_technical],
+            [t["path"] for t in all_technical],
+            photo_ids=[t["photo_id"] for t in all_technical],
             profile=profile,
         )
     except EnvironmentError as exc:
@@ -418,16 +400,16 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
     except RuntimeError:
         # The exception text carries Gemini's raw reply, which describes the
         # photos. Never log or return it (privacy rule 2).
-        raise _reject(502, f"Gemini scoring failed for {len(sharp_technical)} photo(s).")
-    logger.info("[perf] gemini total: %.2fs (%d photos)", time.perf_counter() - _t, len(sharp_technical))
+        raise _reject(502, f"Gemini scoring failed for {len(all_technical)} photo(s).")
+    logger.info("[perf] gemini total: %.2fs (%d photos)", time.perf_counter() - _t, len(all_technical))
 
     # score_photos returns exactly one row per photo or raises. If one is still
     # missing, fail the request: never rank a set with a photo silently dropped.
     gemini_by_id = {s["photo_id"]: s for s in gemini_scores}
-    missing = sum(1 for t in sharp_technical if t["photo_id"] not in gemini_by_id)
+    missing = sum(1 for t in all_technical if t["photo_id"] not in gemini_by_id)
     if missing:
-        raise _reject(502, f"Gemini returned no score for {missing} of {len(sharp_technical)} photo(s).")
-    merged = [_merge(tech, gemini_by_id[tech["photo_id"]]) for tech in sharp_technical]
+        raise _reject(502, f"Gemini returned no score for {missing} of {len(all_technical)} photo(s).")
+    merged = [_merge(tech, gemini_by_id[tech["photo_id"]]) for tech in all_technical]
 
     if not merged:
         raise _reject(500, "Gemini returned no scoreable results.")
@@ -437,13 +419,10 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
         "mode":               "set",
         "profile":            profile,
         "weights":            weights,
-        "blur_threshold":     _BLUR_THRESHOLD,
-        "blur_gate_bypassed": blur_gate_bypassed,
         "total_photos":       len(photos),
         "scored_photos":      len(merged),
-        "skipped_blurry":     0 if blur_gate_bypassed else len(blurry_ids),
         "ranked":             ranked,
-        "left_out":           [] if blur_gate_bypassed else _blurry(all_technical),
+        "left_out":           [],  # only unreadable / unscorable photos; _left_out adds them
     }
 
 

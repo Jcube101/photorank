@@ -15,7 +15,9 @@ import { listNames } from "./unprepared.js";
  * @param {object} result  The /rank response, plus the app's own `unprepared`
  *   and `uploaded` name lists (App.jsx).
  * @returns {Array<{photo_id: string, reason: string, blur_raw?: number}>}
- *   reason: "unprepared" | "blurry" | "unreadable" | "unscorable" | "missing"
+ *   reason: "unprepared" | "unreadable" | "unscorable" | "missing", or
+ *   "blurry" in results saved before 2026-11-27 (the server no longer drops
+ *   photos for blur, but a restored session may still carry them)
  */
 export function leftOutPhotos(result) {
   const ranked = new Set((result.ranked ?? []).map((p) => p.photo_id));
