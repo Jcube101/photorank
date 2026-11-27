@@ -294,6 +294,7 @@ async def rank_endpoint(
                     custom_weights if profile == "custom" else PROFILES[profile]
                 )
                 output = _run_set(photos, profile, effective_weights)
+            output["left_out"] = _left_out(upload_info, photos, output)
 
         finally:
             cleanup(ingest_temp_dir)
@@ -311,6 +312,41 @@ async def rank_endpoint(
 
 
 # ---------------------------------------------------------------------------
+# Photos left out of the ranking
+# ---------------------------------------------------------------------------
+# Every uploaded photo comes back exactly once: in `ranked`, or in `left_out`
+# with the reason, so the app can name it (SPECS §6.1). A 5-photo burst once
+# came back as 2 cards with nothing said about the other 3 (the blur gate had
+# dropped them), LEARNINGS 2026-11-27. Reasons:
+#   "unreadable"  ingest couldn't decode it
+#   "unscorable"  scoring raised on it
+#   "blurry"      below the blur threshold, with its blur_raw (only when the
+#                 gate thinned the set; when it is bypassed, everything ranks)
+
+def _left_out(upload_info: list[tuple[Path, str]], photos: list[dict], output: dict) -> list[dict]:
+    """The scoring routine's left_out, plus uploads ingest dropped, in upload order."""
+    by_id = {entry["photo_id"]: entry for entry in output.get("left_out", [])}
+    ingested = {photo["photo_id"] for photo in photos}
+    ranked = {photo["photo_id"] for photo in output["ranked"]}
+    left_out = []
+    for _path, photo_id in upload_info:
+        if photo_id in ranked:
+            continue
+        if photo_id not in ingested:
+            left_out.append({"photo_id": photo_id, "reason": "unreadable"})
+        else:
+            # Never silently missing: a photo the routine didn't account for
+            # is still reported (none should be).
+            left_out.append(by_id.get(photo_id, {"photo_id": photo_id, "reason": "unscorable"}))
+    return left_out
+
+
+def _blurry(scores: list[dict]) -> list[dict]:
+    return [{"photo_id": s["photo_id"], "reason": "blurry", "blur_raw": round(s["blur_raw"], 1)}
+            for s in scores if s["blur_raw"] < _BLUR_THRESHOLD]
+
+
+# ---------------------------------------------------------------------------
 # Scoring sub-routines (called only from rank_endpoint, after EXIF stripped)
 # ---------------------------------------------------------------------------
 
@@ -321,7 +357,7 @@ def _run_burst(photos: list[dict]) -> dict:
             score = compute_burst_scores(photo["path"], photo_id=photo["photo_id"])
             all_scores.append(score)
         except ValueError as exc:
-            logger.warning("burst scoring skipped a photo: %s", exc)
+            logger.warning("burst scoring skipped a photo: %s", exc)  # left_out: unscorable
 
     if not all_scores:
         raise _reject(422, "No images could be scored.")
@@ -352,6 +388,7 @@ def _run_burst(photos: list[dict]) -> dict:
         "scored_photos":      len(sharp),
         "skipped_blurry":     0 if blur_gate_bypassed else len(blurry_ids),
         "ranked":             ranked,
+        "left_out":           [] if blur_gate_bypassed else _blurry(all_scores),
     }
 
 
@@ -363,7 +400,7 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
             tech = compute_technical_scores(photo["path"], photo_id=photo["photo_id"])
             all_technical.append(tech)
         except ValueError as exc:
-            logger.warning("technical scoring skipped a photo: %s", exc)
+            logger.warning("technical scoring skipped a photo: %s", exc)  # left_out: unscorable
     logger.info("[perf] tech scoring: %.2fs", time.perf_counter() - _t)
 
     if not all_technical:
@@ -419,6 +456,7 @@ def _run_set(photos: list[dict], profile: str, weights: dict) -> dict:
         "scored_photos":      len(merged),
         "skipped_blurry":     0 if blur_gate_bypassed else len(blurry_ids),
         "ranked":             ranked,
+        "left_out":           [] if blur_gate_bypassed else _blurry(all_technical),
     }
 
 

@@ -7,7 +7,7 @@ import AxisBar from "./AxisBar.jsx";
 import Photo from "./Photo.jsx";
 import { buildBreakdown } from "../lib/breakdown.js";
 
-export default function HeroCard({ photo, previewUrl, profileLabel, fallbackNote }) {
+export default function HeroCard({ photo, previewUrl, rankedBy, fallbackNote }) {
   const [open, setOpen] = useState(false);
 
   const { axes, total } = useMemo(
@@ -40,12 +40,12 @@ export default function HeroCard({ photo, previewUrl, profileLabel, fallbackNote
           </div>
           <div className="hero-label-stack">
             <div className="eyebrow">Final score</div>
-            <div className="label-main">{profileLabel} profile</div>
+            <div className="label-main">{rankedBy}</div>
           </div>
         </div>
         <div className={"hero-note" + (note.quoted ? " quoted" : "")}>
           {note.text}
-          <span className="by">PhotoRank · {profileLabel} profile</span>
+          <span className="by">PhotoRank · {rankedBy}</span>
         </div>
 
         <button

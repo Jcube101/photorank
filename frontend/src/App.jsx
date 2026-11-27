@@ -3,12 +3,13 @@
 // batch and the preview object URLs handed back by the loading screen (revoked
 // on reset so nothing lingers — photos stay on device, nothing is stored).
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import UploadScreen from "./screens/UploadScreen.jsx";
 import LoadingScreen from "./screens/LoadingScreen.jsx";
 import ResultsScreen from "./screens/ResultsScreen.jsx";
 import MessageScreen from "./components/MessageScreen.jsx";
 import { usePwaInstall } from "./usePwaInstall.js";
+import { newerBuildDeployed } from "./lib/freshness.js";
 
 // Session continuity: Android can kill the PWA process during a tab switch,
 // which would otherwise drop the user back to the upload screen. We stash the
@@ -60,6 +61,30 @@ export default function App() {
   const online = useOnline();
   const install = usePwaInstall();
 
+  // Pick up a new deploy. Android keeps an installed PWA alive in memory, so
+  // reopening it doesn't reload it (lib/freshness.js). When the app comes back
+  // to the front, or returns to the upload screen, check whether a newer build
+  // is deployed, and reload only where nothing is lost: the upload screen with
+  // no photos picked. Elsewhere it waits: "New batch" lands on that screen.
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+  const pickedRef = useRef(0); // photos picked on the upload screen
+  const staleRef = useRef(false);
+  const reloadIfStale = useCallback(async () => {
+    if (!staleRef.current) staleRef.current = await newerBuildDeployed();
+    if (staleRef.current && screenRef.current === "upload" && pickedRef.current === 0) {
+      window.location.reload();
+    }
+  }, []);
+  useEffect(() => {
+    const onShow = () => document.visibilityState === "visible" && reloadIfStale();
+    document.addEventListener("visibilitychange", onShow);
+    return () => document.removeEventListener("visibilitychange", onShow);
+  }, [reloadIfStale]);
+  useEffect(() => {
+    if (screen === "upload") reloadIfStale();
+  }, [screen, reloadIfStale]);
+
   // Release any previews we still hold before replacing/clearing them.
   const revokePreviews = useCallback((map) => {
     map?.forEach?.((url) => url && URL.revokeObjectURL(url));
@@ -86,10 +111,11 @@ export default function App() {
   }, []);
 
   const handleDone = useCallback(
-    (res, previewMap, unprepared = []) => {
-      // Photos left out because they couldn't be prepared are named on the
-      // results screen, including after a restore.
-      const shown = unprepared.length ? { ...res, unprepared } : res;
+    (res, previewMap, { unprepared = [], uploaded = [] } = {}) => {
+      // The names the phone couldn't prepare, and the names it uploaded, so the
+      // results screen can name every photo left out, including after a
+      // restore (lib/leftOut.js).
+      const shown = { ...res, unprepared, uploaded };
       setResult(shown);
       setPreviews(previewMap);
       setScreen("results");
@@ -156,6 +182,7 @@ export default function App() {
         profile={profile}
         setProfile={setProfile}
         onStart={handleStart}
+        onPickedChange={(n) => (pickedRef.current = n)}
         installSlot={installSlot}
         offline={!online}
       />

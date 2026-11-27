@@ -1188,7 +1188,15 @@ body {
   cursor: not-allowed;
 }
 
-/* Photos that couldn't be prepared for upload, named on the results screen. */
+/* Photos picked but not ranked (lib/leftOut.js), listed under "Left out". */
+.left-out-card .rank-row {
+  cursor: default;
+}
+.left-out-card .rank-blurb {
+  color: var(--muted);
+}
+
+/* Photos left out of the ranking, named at the top of the results screen. */
 .prep-notice {
   margin: 10px 22px 0;
   padding: 10px 12px;
