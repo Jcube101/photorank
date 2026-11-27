@@ -93,7 +93,7 @@ export default function LoadingScreen({ files, profile, onDone, onError, onBack 
         handedOff = true;
         // Let the bar visibly reach 100% before swapping screens.
         setTimeout(() => {
-          if (!cancelled) onDone(result, previewMap, unprepared);
+          if (!cancelled) onDone(result, previewMap, { unprepared, uploaded: compressed.map((f) => f.name) });
         }, 360);
       } catch (err) {
         if (cancelled || err?.name === "AbortError") return;

@@ -10,6 +10,12 @@
 // `break` makes the page's image decoders fail the way they have on a real
 // Android phone: "createImageBitmap" rejects every photo, and "imgDecode"
 // makes HTMLImageElement.decode() reject too (an <img> still displays).
+//
+// `redeploy: {dist}` simulates a deploy while the app stays open, as an
+// installed PWA does on Android: after the results, it points the served
+// index.html at a new bundle name, brings the page "back to the front", taps
+// New batch, then deploys again and brings the upload screen back to the front.
+// It reports which bundle the page was running at each step.
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -95,7 +101,7 @@ async function readResults() {
       width: heroImg?.naturalWidth ?? null,
       note: hero.querySelector(".hero-note").firstChild.textContent,
     }];
-    for (const card of document.querySelectorAll(".rank-card")) {
+    for (const card of document.querySelectorAll(".rank-card:not(.left-out-card)")) {
       const img = card.querySelector(".rank-thumb img");
       cards.push({
         id: card.querySelector(".rank-sub").textContent,
@@ -106,8 +112,19 @@ async function readResults() {
     }
     const save = document.querySelector(".results-footer .btn-primary");
     const style = getComputedStyle(save);
+    const leftOut = [...document.querySelectorAll(".left-out-card")].map((card) => {
+      const img = card.querySelector(".rank-thumb img");
+      return {
+        id: card.querySelector(".rank-sub").textContent,
+        reason: card.querySelector(".rank-blurb").textContent,
+        shows: shows(img),
+      };
+    });
     return {
       cards,
+      leftOut,
+      meta: document.querySelector(".results-meta").textContent,
+      rankedBy: document.querySelector(".hero-card .label-main").textContent,
       saveEnabled: !save.disabled,
       saveLook: { opacity: Number(style.opacity), cursor: style.cursor },
       notice: document.querySelector(".prep-notice")?.textContent ?? null,
@@ -147,5 +164,44 @@ if (await page.locator(".rerank").count()) {
 await page.reload();
 const restored = await readResults();
 
-console.log(JSON.stringify({ mode, response, rankRequests, fresh, switcher, restored, errors }));
+// A deploy while the app stays open (see the header).
+let redeploy = null;
+if (spec.redeploy) {
+  const path = await import("node:path");
+  const dist = spec.redeploy.dist;
+  const deploy = (tag) => {
+    const index = path.join(dist, "index.html");
+    const html = fs.readFileSync(index, "utf8");
+    const current = html.match(/\/assets\/(index-[\w-]+\.js)/)[1];
+    const next = `index-${tag}.js`;
+    fs.copyFileSync(path.join(dist, "assets", current), path.join(dist, "assets", next));
+    fs.writeFileSync(index, html.replace(current, next));
+    return `/assets/${next}`;
+  };
+  const running = () =>
+    page.evaluate(() => new URL(document.querySelector('script[type="module"][src*="/assets/"]').src).pathname);
+  const backToFront = () => page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  redeploy = { first: deploy("redeployed1") };
+  await backToFront();
+  await page.waitForTimeout(1500);
+  redeploy.onResults = {
+    running: await running(),
+    stillShowsResults: (await page.locator(".hero-card").count()) > 0,
+  };
+  const reloaded = page.waitForEvent("load", { timeout: 15_000 }).catch(() => null);
+  await page.getByRole("button", { name: /New batch/ }).click();
+  await reloaded;
+  await page.waitForSelector(".upload-cta");
+  redeploy.afterNewBatch = await running();
+
+  redeploy.second = deploy("redeployed2");
+  const reloadedAgain = page.waitForEvent("load", { timeout: 15_000 }).catch(() => null);
+  await backToFront();
+  await reloadedAgain;
+  await page.waitForSelector(".upload-cta");
+  redeploy.afterResume = await running();
+}
+
+console.log(JSON.stringify({ mode, response, rankRequests, fresh, switcher, restored, redeploy, errors }));
 await browser.close();

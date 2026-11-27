@@ -10,11 +10,12 @@
 import { useMemo, useState } from "react";
 import HeroCard from "../components/HeroCard.jsx";
 import RankCard from "../components/RankCard.jsx";
+import LeftOutCard from "../components/LeftOutCard.jsx";
 import { PROFILES, PROFILE_WEIGHTS, profileName } from "../config.js";
 import { rerankByProfile } from "../lib/rerank.js";
 import { buildBreakdown } from "../lib/breakdown.js";
 import { fallbackNotes } from "../lib/notes.js";
-import { unpreparedNotice } from "../lib/unprepared.js";
+import { leftOutNotice, leftOutPhotos } from "../lib/leftOut.js";
 
 export default function ResultsScreen({ result, previews, onRestart }) {
   const canSwitch = result.mode === "set";
@@ -41,8 +42,15 @@ export default function ResultsScreen({ result, previews, onRestart }) {
     return fallbackNotes(ranked.map((p) => buildBreakdown(p.score_breakdown).axes), { subset });
   }, [ranked, result.scored_photos, result.total_photos]);
 
-  const profLabel = profileName(canSwitch ? viewProfile : result.profile);
-  const totalPhotos = result.total_photos ?? ranked.length;
+  // Every photo picked but not ranked, with why: named in the notice at the top
+  // and listed under "Left out", so the cards always add up to the batch.
+  const leftOut = useMemo(() => leftOutPhotos(result), [result]);
+
+  // Burst mode uses no profile; its results must not say "Custom".
+  const isBurst = result.mode === "burst";
+  const profLabel = isBurst ? "Burst" : profileName(canSwitch ? viewProfile : result.profile);
+  const rankedBy = isBurst ? "Burst mode" : `${profLabel} profile`;
+  const totalPhotos = ranked.length + leftOut.length;
 
   const [openId, setOpenId] = useState(rest[0]?.photo_id ?? null);
   const [scrolled, setScrolled] = useState(false);
@@ -98,9 +106,11 @@ export default function ResultsScreen({ result, previews, onRestart }) {
             </div>
           </div>
 
-          {result.unprepared?.length > 0 && (
+          {leftOut.length > 0 && (
             <div className="prep-notice" role="status">
-              {unpreparedNotice(result.unprepared)}
+              {leftOutNotice(leftOut).map((line) => (
+                <div key={line}>{line}</div>
+              ))}
             </div>
           )}
 
@@ -139,7 +149,7 @@ export default function ResultsScreen({ result, previews, onRestart }) {
           <HeroCard
             photo={winner}
             previewUrl={winnerUrl}
-            profileLabel={profLabel}
+            rankedBy={rankedBy}
             fallbackNote={notes[0]}
           />
 
@@ -161,6 +171,25 @@ export default function ResultsScreen({ result, previews, onRestart }) {
                     onToggle={() =>
                       setOpenId(openId === p.photo_id ? null : p.photo_id)
                     }
+                  />
+                ))}
+              </div>
+            </>
+          )}
+
+          {leftOut.length > 0 && (
+            <>
+              <div className="ranked-list-head">
+                <div className="title">Left out</div>
+                <div className="eyebrow">Not ranked</div>
+              </div>
+              <div className="ranked-list left-out-list">
+                {leftOut.map((entry) => (
+                  <LeftOutCard
+                    key={entry.photo_id}
+                    entry={entry}
+                    previewUrl={previewFor(entry.photo_id)}
+                    threshold={result.blur_threshold}
                   />
                 ))}
               </div>

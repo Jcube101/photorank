@@ -56,11 +56,8 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def site(tmp_path_factory):
-    import uvicorn
-    from fastapi import FastAPI
-    from fastapi.staticfiles import StaticFiles
-
+def built(tmp_path_factory):
+    """The PWA, built once for the module: (dist dir, the port its API points at)."""
     port = _free_port()
     dist = tmp_path_factory.mktemp("dist")
     subprocess.run(
@@ -69,6 +66,30 @@ def site(tmp_path_factory):
         cwd=FRONTEND, check=True, timeout=300,
         env={**os.environ, "VITE_API_BASE": f"http://127.0.0.1:{port}"},
     )
+    return dist, port
+
+
+@pytest.fixture(scope="module")
+def site(built):
+    yield from _serve(*built)
+
+
+@pytest.fixture
+def redeploy_site(site, built):
+    """The site, for a test that redeploys it; its index.html is put back after."""
+    index = built[0] / "index.html"
+    original = index.read_text()
+    try:
+        yield site, built[0]
+    finally:
+        index.write_text(original)
+
+
+def _serve(dist: Path, port: int):
+    """Serve the bundle and the real POST /rank handler from one origin."""
+    import uvicorn
+    from fastapi import FastAPI
+    from fastapi.staticfiles import StaticFiles
 
     app = FastAPI()
     app.add_api_route("/rank", api.rank_endpoint, methods=["POST"])
@@ -107,12 +128,13 @@ def _jpeg(width: int, seed: int) -> bytes:
 
 def _drive(site: str, tmp_path: Path, monkeypatch, mode: str | None,
            photos: list[tuple[str, bytes]] | None = None, gemini=_fake_gemini,
-           breaks: tuple[str, ...] = ()) -> dict:
+           breaks: tuple[str, ...] = (), redeploy: Path | None = None) -> dict:
     """
     Upload `photos` [(name, bytes) or (name, bytes, MIME type)] (default: NAMES
     at WIDTHS) and read the results screen. `mode` forces the server's choice; None lets it decide.
     `gemini` stands in for score_photos. `breaks` makes the page's decoders
-    fail (see tests/e2e/results_photos.mjs).
+    fail, and `redeploy` (the served dist) deploys a new build while the app
+    stays open (see tests/e2e/results_photos.mjs).
     """
     if mode is not None:
         monkeypatch.setattr(api, "_auto_detect_mode", lambda *args: mode)
@@ -125,7 +147,8 @@ def _drive(site: str, tmp_path: Path, monkeypatch, mode: str | None,
         path.write_bytes(data)
         files.append({"path": str(path), "name": name, "type": mime[0] if mime else "image/jpeg"})
     proc = subprocess.run(
-        ["node", str(DRIVER)], input=json.dumps({"url": site, "files": files, "break": list(breaks)}),
+        ["node", str(DRIVER)], input=json.dumps({"url": site, "files": files, "break": list(breaks),
+                          "redeploy": {"dist": str(redeploy)} if redeploy else None}),
         capture_output=True, text=True, timeout=180, check=False,
     )
     assert proc.returncode == 0, proc.stderr
@@ -460,3 +483,49 @@ def test_a_sideways_photo_is_scored_and_shown_upright(site, tmp_path, monkeypatc
         assert scored[name].shape[:2] == upright.shape[:2] == (320, 240), name
         assert _correlation(scored[name], upright) > 0.9, name
     assert {c["width"] for c in out["fresh"]["cards"]} == {240}  # shown upright too
+
+
+# --- Every photo picked is on screen, ranked or named as left out -------------
+# 2026-11-27 18:11: a 5-photo burst showed 2 cards and nothing else. The
+# server's blur gate had dropped 3 frames and the app said nothing about them.
+
+BLURRY_BURST = [0, 0.6, 2.2, 2.4, 2.6]  # blur sigma: the last 3 fall below the gate
+
+
+def test_a_burst_shows_every_photo_picked(site, tmp_path, monkeypatch):
+    photos = [(name, exif_jpeg(width=w, seed=i, dto=t, blur=b))
+              for i, (name, t, w, b) in enumerate(zip(PHONE_NAMES, PHONE_TIMES, PHONE_WIDTHS, BLURRY_BURST))]
+    out = _drive(site, tmp_path, monkeypatch, None, photos)
+    assert out["mode"] == "burst"
+    sharp, blurry = PHONE_NAMES[:2], PHONE_NAMES[2:]
+
+    for screen in (out["fresh"], out["restored"]):
+        assert sorted(c["id"] for c in screen["cards"]) == sorted(sharp)
+        assert [c["id"] for c in screen["leftOut"]] == blurry  # in the order picked
+        for card in screen["leftOut"]:
+            assert card["reason"].startswith("Too blurry to rank: blur check "), card
+            assert card["reason"].endswith(", needs 100."), card
+        assert screen["notice"] == f"Too blurry to rank: {blurry[0]}, {blurry[1]} and {blurry[2]}."
+        assert screen["meta"] == "Burst · 5 photos"  # not "Custom"
+        assert screen["rankedBy"] == "Burst mode"
+    assert {c["shows"] for c in out["fresh"]["leftOut"]} == {"photo"}  # each one's own photo
+    left = {e["photo_id"]: e for e in out["response"]["left_out"]}
+    assert sorted(left) == sorted(blurry)
+    assert all(e["reason"] == "blurry" and e["blur_raw"] < 100 for e in left.values())
+
+
+# --- A deploy reaches an app that stays open ----------------------------------
+# Android keeps an installed PWA alive in memory, so reopening it doesn't
+# reload it: on 2026-11-27 the owner's phone ran a bundle two deploys old.
+
+def test_a_new_deploy_reaches_an_open_app(redeploy_site, tmp_path, monkeypatch):
+    site, dist = redeploy_site
+    out = _drive(site, tmp_path, monkeypatch, "burst", redeploy=dist)
+    r = out["redeploy"]
+    # Coming back to the front on a result: it waits, so the result isn't lost ...
+    assert r["onResults"]["stillShowsResults"]
+    assert r["onResults"]["running"] != r["first"]
+    # ... and "New batch" starts on the new build.
+    assert r["afterNewBatch"] == r["first"]
+    # Back to the front on the upload screen, nothing picked: it reloads.
+    assert r["afterResume"] == r["second"]

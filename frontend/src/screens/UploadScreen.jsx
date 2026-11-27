@@ -18,7 +18,9 @@ function validate(files) {
   return null;
 }
 
-export default function UploadScreen({ profile, setProfile, onStart, installSlot, offline }) {
+export default function UploadScreen({
+  profile, setProfile, onStart, onPickedChange, installSlot, offline,
+}) {
   const [files, setFiles] = useState([]);
   const [dragging, setDragging] = useState(false);
   const [previews, setPreviews] = useState([]); // object URLs for the summary
@@ -26,6 +28,11 @@ export default function UploadScreen({ profile, setProfile, onStart, installSlot
 
   // Build/replace lightweight previews for the chosen files. Revoked on change
   // and unmount so we never leak object URLs.
+  // Tell the app how many photos are picked, so it never reloads over them.
+  useEffect(() => {
+    onPickedChange?.(files.length);
+  }, [files, onPickedChange]);
+
   useEffect(() => {
     const urls = files.map((f) => URL.createObjectURL(f));
     setPreviews(urls);

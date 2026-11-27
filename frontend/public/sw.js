@@ -41,6 +41,11 @@ self.addEventListener("fetch", (event) => {
   // Never intercept uploads / non-GET — POST /rank must always hit the network.
   if (req.method !== "GET") return;
 
+  // A request that asked not to be cached must see the network, never this
+  // cache: the app's new-build check fetches "/" this way (src/lib/freshness.js),
+  // and a cached shell would tell it the old build is still current.
+  if (req.cache === "no-store") return;
+
   const url = new URL(req.url);
 
   // Never touch blob:/data: requests. Object URLs (image previews, the

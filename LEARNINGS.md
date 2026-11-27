@@ -277,4 +277,16 @@ are equal.
 
 ---
 
+**Discovery:** A 5-photo burst on the owner's phone showed 2 cards and a header saying 5 photos, with no word about the other 3. All 5 reached the server and were ingested and scored. The burst blur gate then dropped the 3 below the threshold (`blur_raw` < 100; the gate only thins a set, so it applies when another photo is sharp), and the response carried only the count `skipped_blurry: 3`, which the app never showed. The log can't confirm the count: the gate logs only when it is bypassed.
+**Impact:** The API now returns every upload exactly once, in `ranked` or in `left_out` with a reason (`blurry` with its `blur_raw`, `unreadable`, `unscorable`; SPECS §6.1). The app names every photo not ranked, in a notice and under "Left out", with its photo and reason, and the header counts what is on screen. A burst also said "Custom" in the header because burst responses carry no profile; it now says "Burst". Tests: `tests/test_left_out.py` (each upload accounted for once, both modes, every reason) and a browser test with a 5-photo burst that has 3 blurry frames.
+**Date:** 2026-11-27
+
+---
+
+**Discovery:** The owner's phone ran a frontend two deploys old. It showed notes PR #20 had replaced, and lacked PR #21's notice. The access log settled it: from 16:34 (where the retained journal starts) to 18:14, the phone never requested `/` or a bundle. It ran `/rank` at 17:44 and 18:11 from a page loaded earlier, and only loaded the current bundle at 18:14. Android keeps an installed PWA alive in memory, so "reopening" it, even after the advice to swipe it away, resumed the same page. PR #18's `no-cache` shell only helps when the page is actually reloaded.
+**Impact:** The app now checks for a newer build when it comes to the front and when it returns to the upload screen. It compares the entry script the deployed shell loads with its own (`src/lib/freshness.js`), and reloads on the upload screen with nothing picked, or at "New batch". To find which build a phone ran, read the access log for its `GET /assets/index-*.js` requests; the bundle hash changes with every build. Test: a browser test deploys a new build while the app stays open.
+**Date:** 2026-11-27
+
+---
+
 *Add new entries above this line as discoveries are made.*

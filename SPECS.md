@@ -466,7 +466,8 @@ Rounded to 3 decimal places. When two photos have equal `final_score`,
   "total_photos":       24,
   "scored_photos":      21,
   "skipped_blurry":     3,
-  "ranked":             [/* array of per-photo objects, sorted by final_rank */]
+  "ranked":             [/* array of per-photo objects, sorted by final_rank */],
+  "left_out":           [{"photo_id": "IMG_4830.jpg", "reason": "blurry", "blur_raw": 41.6}]
 }
 ```
 
@@ -513,6 +514,20 @@ as is). Only two cases change: a missing filename becomes `image.jpg`, and a
 repeated name gets `_N` before its extension, using the lowest `N` not already
 taken in the batch (`a.jpg`, `a.jpg` → `a.jpg`, `a_1.jpg`). The PWA finds each
 result's preview by `photo_id`, so this is a contract (`api/main.py:_photo_ids`).
+
+**`left_out`**: every uploaded photo comes back **exactly once**, in `ranked` or
+in `left_out` (in upload order), so the app can name it. Each entry is
+`{"photo_id", "reason"}`, where `reason` is:
+
+| `reason` | Meaning |
+|---|---|
+| `blurry` | Below the blur threshold while other photos cleared it (the gate thinned the set). Has `blur_raw`. When the gate is bypassed, nothing is left out for blur. |
+| `unreadable` | Ingest couldn't decode it. |
+| `unscorable` | Scoring raised on it. |
+
+`skipped_blurry` (the count) stays for compatibility. (`api/main.py:_left_out`;
+a 5-photo burst once came back as 2 ranked photos and a bare count, so the
+app could not say which 3 were dropped.)
 
 **Error responses:**
 
@@ -685,6 +700,20 @@ one decimal the breakdown shows, so every note is true for its photo:
 
 Only №1 is ever called the best at anything.
 
+### 9.4a Photos left out
+
+The results screen shows every photo the user picked: ranked as a card, or
+named as left out (`src/lib/leftOut.js`). Left out are: photos the phone
+couldn't prepare (never sent, §9.3), the server's `left_out` (§6.1), and, as a
+safety net, any uploaded name the server returned in neither list ("Not
+returned by the server"). They are named in a notice at the top ("Too blurry
+to rank: a.jpg, b.jpg and c.jpg.") and listed under **Left out** after the
+runners-up, each with its photo and reason ("Too blurry to rank: blur check
+42, needs 100."). The header count is ranked + left out, so it always matches
+what is on screen. The app stores the names it uploaded with the result, so
+this survives a restore. Burst results say "Burst" / "Burst mode", never a
+profile (burst mode uses none).
+
 ### 9.5 Error handling
 
 `src/api.js` maps HTTP status to user-facing copy — raw server detail and
@@ -712,6 +741,17 @@ stack traces are never surfaced:
   content-hashed and need no header.
 - Add-to-Home-Screen prompt is offered after the first successful ranking
   (`beforeinstallprompt` on Chrome/Android; a manual hint on iOS Safari).
+
+**New deploys reach an open app.** Android keeps an installed PWA alive in
+memory, so reopening it does not reload the page, and the no-cache shell never
+gets fetched. When the app comes to the front, and whenever it returns to the
+upload screen, it fetches `/` (`cache: "no-store"`) and checks that the shell
+still loads the same `/assets/index-<hash>.js` as the running page
+(`src/lib/freshness.js`). If not, it reloads, but only on the upload screen with
+no photos picked; on a result it waits for "New batch". Anything it can't read
+(offline, an Access login redirect) never triggers a reload. The service worker
+passes every `no-store` request straight to the network, so it can never
+answer this check from its cached shell.
 
 ### 9.7 Client-side privacy
 

@@ -216,11 +216,13 @@ photorank/
     │   ├── lib/notes.js          ← the note on a photo without a Gemini note (compares it with №1)
     │   ├── lib/stripJpeg.js      ← cuts every metadata segment out of a JPEG (when compression fails)
     │   ├── lib/unprepared.js     ← wording for photos that couldn't be prepared for upload
+    │   ├── lib/leftOut.js        ← every picked photo not ranked, with why (notice + Left out list)
+    │   ├── lib/freshness.js      ← is a newer build deployed? (reload an open PWA safely)
     │   ├── lib/rerank.js         ← client-side profile re-rank (mirrors rank_photos)
     │   ├── lib/uploadNames.js    ← unique upload names (the server echoes them as photo_id)
     │   ├── lib/captureTime.js    ← EXIF DateTimeOriginal + Orientation from the original file
     │   ├── screens/              ← UploadScreen, LoadingScreen, ResultsScreen
-    │   └── components/           ← HeroCard, RankCard, Photo, AxisBar, MessageScreen
+    │   └── components/           ← HeroCard, RankCard, LeftOutCard, Photo, AxisBar, MessageScreen
     └── _design/                  ← archived Claude Design reference (NOT production)
 ```
 
@@ -449,6 +451,15 @@ near-black `--ink`, olive `--accent`).
   screen names it ("Couldn't prepare … for upload"), or the error screen does
   if fewer than 2 photos are left. The cards (`components/Photo.jsx`) show the
   gradient placeholder when an image won't load.
+- **Every picked photo is on screen.** The API returns each upload exactly
+  once, in `ranked` or in `left_out` with a reason (`blurry` + `blur_raw`,
+  `unreadable`, `unscorable`; `api/main.py:_left_out`, SPECS §6.1). The results
+  screen names every photo not ranked (that, photos the phone couldn't prepare,
+  and any uploaded name in neither list) in a notice and under **Left out**
+  (`src/lib/leftOut.js`), and the header counts ranked + left out. Never drop a
+  photo silently: a burst once showed 2 of 5 cards because the blur gate had
+  dropped 3 frames and only a count came back (LEARNINGS 2026-11-27). Burst
+  results say "Burst", never a profile.
 - **Notes without Gemini** (every burst-mode photo): `src/lib/notes.js`
   compares each photo with the rest of the result, at the breakdown's one
   decimal. Only №1 is called the best at anything "in this set"; every other
@@ -473,6 +484,10 @@ near-black `--ink`, olive `--accent`).
   successful ranking (`src/usePwaInstall.js`). The API sends the shell
   (everything outside `assets/`) with `Cache-Control: no-cache`, so a deploy
   reaches an installed PWA on its next launch (`api/main.py:_SpaStaticFiles`).
+  A "launch" is not enough on Android, which keeps the PWA alive in memory, so
+  reopening it doesn't reload it: the app also checks for a newer build when it
+  comes to the front and when it returns to the upload screen, and reloads where
+  nothing is lost (`src/lib/freshness.js`, SPECS §9.6).
 - **Deploy (the Pi):** this checkout is the live service and `frontend/dist` is
   served straight from disk, so rebuilding `dist` deploys the frontend at once.
   Build into another `--outDir` to test a branch; rebuild `dist` only from `main`.
@@ -593,6 +608,9 @@ cd ~/projects/photorank && git checkout pre-pr-<number> && (cd frontend && npm c
 - `frontend/src/lib/captureTime.js:readPhotoTags()` — DateTimeOriginal and Orientation from the first 128 KB of an original JPEG; reads no other tag
 - `core/ingest.py:apply_orientation()` — turns stored pixels upright for an EXIF orientation (1–8); `ingest(paths, orientations=)` applies it
 - `api/main.py:_sent_orientations()` — parses the PWA's `orientations` field (values 1–8 only; anything else ignored)
+- `api/main.py:_left_out()` — every upload not in `ranked`, with its reason; each photo comes back exactly once
+- `frontend/src/lib/leftOut.js:leftOutPhotos()` — what the results screen names as left out (phone, server, safety net)
+- `frontend/src/lib/freshness.js:newerBuildDeployed()` — does the deployed shell load a different bundle than this page?
 - `frontend/src/lib/notes.js:fallbackNotes()` — one note per photo without a Gemini note, each true for its photo; `noteClaims()` is the same as data (tested)
 - `frontend/src/compress.js:compressImage()` — ~1.5 MP JPEG re-encode (`createImageBitmap`, else an `<img>`); on failure the JPEG with its metadata stripped; else `unprepared` (not uploaded)
 - `frontend/src/lib/stripJpeg.js:stripJpegMetadata()` — keeps only the segments a decoder needs (allowlist) and nothing after EOI; null if it can't
