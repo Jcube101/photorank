@@ -289,4 +289,15 @@ are equal.
 
 ---
 
+**Discovery:** A fixed burst blur gate (`blur_raw < 100`) dropped frames the owner judged fine: an indoor selfie burst lost frames at 59, 69 and 99. Laplacian variance depends on the camera, the scene and its texture, not just on focus. On this Pi's real sets it runs from 78 to 3556, and the fixed gate would drop 8 of 203 perfectly usable frames. Only the ratio *within* a set means "softer".
+**Impact:** Burst mode ranks every readable photo. A frame is flagged "Noticeably softer than №1" when its `blur_raw` is below 0.2 × №1's (`core/rank.py:BURST_SOFTER_RATIO`). The data behind 0.2:
+- **Natural variation.** Across 37 real near-identical sets (the Wat Arun answer-key sets on the Sony and a 16-frame Samsung handheld sequence; 166 non-best frames), the ratio to the set's sharpest has a 5th percentile of 0.56, and the lowest is 0.36. That frame (Samsung 110341) is as sharp as the best where the scene is still; a waving hand and new framing lowered its variance.
+- **The owner's picks.** The answer-key picks go down to 0.50.
+- **Visible blur.** Blurring real frames at the app's 1.5 MP: Gaussian σ 0.5 px (barely visible) gives 0.37–0.45, and σ 0.75 (visibly softer at 1:1) gives 0.09–0.16.
+
+0.2 is the log midpoint between 0.36 and 0.11, about a 0.65 px blur. It flags no real frame in the data and catches visible softness. It is measured against №1, so the label is true by construction. Set mode keeps its fixed gate of 100, unchanged.
+**Date:** 2026-11-27
+
+---
+
 *Add new entries above this line as discoveries are made.*

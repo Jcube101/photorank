@@ -56,6 +56,9 @@ export default function App() {
   const [files, setFiles] = useState([]);
   const [result, setResult] = useState(restored);
   const [previews, setPreviews] = useState(null); // Map<photo_id, objectURL>
+  // Map<photo_id, File>: the picked originals, for the full-screen viewer. In
+  // memory only (never stored, never uploaded); gone on reset or restore.
+  const [originals, setOriginals] = useState(null);
   const [error, setError] = useState(null);
 
   const online = useOnline();
@@ -93,6 +96,7 @@ export default function App() {
   const reset = useCallback(() => {
     revokePreviews(previews);
     setPreviews(null);
+    setOriginals(null);
     setResult(null);
     setFiles([]);
     setError(null);
@@ -111,13 +115,14 @@ export default function App() {
   }, []);
 
   const handleDone = useCallback(
-    (res, previewMap, { unprepared = [], uploaded = [] } = {}) => {
+    (res, previewMap, { unprepared = [], uploaded = [], originals = null } = {}) => {
       // The names the phone couldn't prepare, and the names it uploaded, so the
       // results screen can name every photo left out, including after a
       // restore (lib/leftOut.js).
       const shown = { ...res, unprepared, uploaded };
       setResult(shown);
       setPreviews(previewMap);
+      setOriginals(originals);
       setScreen("results");
       install.armAfterSuccess();
       try {
@@ -164,7 +169,12 @@ export default function App() {
     );
   } else if (screen === "results" && result) {
     body = (
-      <ResultsScreen result={result} previews={previews} onRestart={reset} />
+      <ResultsScreen
+        result={result}
+        previews={previews}
+        originals={originals}
+        onRestart={reset}
+      />
     );
   } else if (screen === "error" && error) {
     body = (

@@ -11,13 +11,18 @@ import { useMemo, useState } from "react";
 import HeroCard from "../components/HeroCard.jsx";
 import RankCard from "../components/RankCard.jsx";
 import LeftOutCard from "../components/LeftOutCard.jsx";
+import PhotoViewer from "../components/PhotoViewer.jsx";
 import { PROFILES, PROFILE_WEIGHTS, profileName } from "../config.js";
 import { rerankByProfile } from "../lib/rerank.js";
 import { buildBreakdown } from "../lib/breakdown.js";
 import { fallbackNotes } from "../lib/notes.js";
-import { leftOutNotice, leftOutPhotos } from "../lib/leftOut.js";
+import { leftOutNotice, leftOutPhotos, leftOutReason } from "../lib/leftOut.js";
 
-export default function ResultsScreen({ result, previews, onRestart }) {
+// Shown on a burst photo whose sharpness is far below №1's (the API's
+// softer_than_top; core/rank.py:BURST_SOFTER_RATIO).
+export const SOFTER_TEXT = "Noticeably softer than №1";
+
+export default function ResultsScreen({ result, previews, originals, onRestart }) {
   const canSwitch = result.mode === "set";
   const [viewProfile, setViewProfile] = useState(result.profile);
 
@@ -60,6 +65,33 @@ export default function ResultsScreen({ result, previews, onRestart }) {
     [previews],
   );
   const winnerUrl = previewFor(winner.photo_id);
+
+  // Full-screen viewer: every photo with something to show, in rank order and
+  // left-out last. A result restored from sessionStorage has no photos, so
+  // nothing opens.
+  const viewerItems = useMemo(() => {
+    const items = [
+      ...ranked.map((p, i) => ({
+        id: p.photo_id,
+        title: `№${i + 1} · ${Number(p.final_score ?? 0).toFixed(1)}/10`,
+        detail: p.notes || notes[i],
+        flag: p.softer_than_top ? SOFTER_TEXT : undefined,
+      })),
+      ...leftOut.map((e) => ({
+        id: e.photo_id,
+        title: "Left out",
+        detail: leftOutReason(e, result.blur_threshold),
+      })),
+    ];
+    return items
+      .map((it) => ({ ...it, original: originals?.get?.(it.id), preview: previews?.get?.(it.id) }))
+      .filter((it) => it.original || it.preview);
+  }, [ranked, notes, leftOut, originals, previews, result.blur_threshold]);
+  const [viewerAt, setViewerAt] = useState(null);
+  const openerFor = (id) => {
+    const i = viewerItems.findIndex((it) => it.id === id);
+    return i < 0 ? undefined : () => setViewerAt(i);
+  };
 
   async function saveWinner() {
     if (!winnerUrl) return;
@@ -114,6 +146,12 @@ export default function ResultsScreen({ result, previews, onRestart }) {
             </div>
           )}
 
+          {isBurst && (
+            <div className="burst-explainer">
+              Burst: near-identical shots ranked on sharpness and exposure only.
+            </div>
+          )}
+
           {canSwitch && (
             <div className="rerank">
               <div className="rerank-head">
@@ -151,6 +189,7 @@ export default function ResultsScreen({ result, previews, onRestart }) {
             previewUrl={winnerUrl}
             rankedBy={rankedBy}
             fallbackNote={notes[0]}
+            onOpen={openerFor(winner.photo_id)}
           />
 
           {rest.length > 0 && (
@@ -167,6 +206,8 @@ export default function ResultsScreen({ result, previews, onRestart }) {
                     rank={i + 2}
                     previewUrl={previewFor(p.photo_id)}
                     fallbackNote={notes[i + 1]}
+                    flag={p.softer_than_top ? SOFTER_TEXT : undefined}
+                    onOpen={openerFor(p.photo_id)}
                     open={openId === p.photo_id}
                     onToggle={() =>
                       setOpenId(openId === p.photo_id ? null : p.photo_id)
@@ -190,6 +231,7 @@ export default function ResultsScreen({ result, previews, onRestart }) {
                     entry={entry}
                     previewUrl={previewFor(entry.photo_id)}
                     threshold={result.blur_threshold}
+                    onOpen={openerFor(entry.photo_id)}
                   />
                 ))}
               </div>
@@ -206,6 +248,13 @@ export default function ResultsScreen({ result, previews, onRestart }) {
           </div>
         </div>
       </div>
+      {viewerAt !== null && viewerItems.length > 0 && (
+        <PhotoViewer
+          items={viewerItems}
+          start={Math.min(viewerAt, viewerItems.length - 1)}
+          onClose={() => setViewerAt(null)}
+        />
+      )}
     </div>
   );
 }

@@ -30,7 +30,7 @@ load_dotenv()
 from core.group import read_capture_time
 from core.ingest import cleanup, ingest
 from core.profiles import BURST_WEIGHTS, PROFILES, validate_weights
-from core.rank import _merge, _rank_burst, rank_photos
+from core.rank import BURST_SOFTER_RATIO, _merge, _rank_burst, flag_softer, rank_photos
 from core.score_burst import compute_burst_scores
 from core.score_tech import compute_technical_scores
 from core.score_vision import score_photos
@@ -320,8 +320,9 @@ async def rank_endpoint(
 # dropped them), LEARNINGS 2026-11-27. Reasons:
 #   "unreadable"  ingest couldn't decode it
 #   "unscorable"  scoring raised on it
-#   "blurry"      below the blur threshold, with its blur_raw (only when the
-#                 gate thinned the set; when it is bypassed, everything ranks)
+#   "blurry"      set mode only: below the blur threshold, with its blur_raw
+#                 (only when the gate thinned the set; when it is bypassed,
+#                 everything ranks). Burst mode has no blur gate.
 
 def _left_out(upload_info: list[tuple[Path, str]], photos: list[dict], output: dict) -> list[dict]:
     """The scoring routine's left_out, plus uploads ingest dropped, in upload order."""
@@ -362,33 +363,19 @@ def _run_burst(photos: list[dict]) -> dict:
     if not all_scores:
         raise _reject(422, "No images could be scored.")
 
-    sharp      = [s for s in all_scores if s["blur_raw"] >= _BLUR_THRESHOLD]
-    blurry_ids = [s["photo_id"] for s in all_scores if s["blur_raw"] < _BLUR_THRESHOLD]
-
-    # The blur gate THINS a set (drop soft frames when sharp ones exist); it must
-    # not refuse to rank. If nothing clears the threshold — common for a small,
-    # uniformly-soft burst — still rank everything and surface the least-blurry.
-    blur_gate_bypassed = not sharp
-    if blur_gate_bypassed:
-        logger.warning(
-            "burst: all %d image(s) below blur threshold (%.1f); ranking all anyway",
-            len(all_scores), _BLUR_THRESHOLD,
-        )
-        sharp = all_scores
-
-    ranked = _rank_burst(sharp)
+    # Every readable photo is ranked: burst mode has no blur gate. A frame far
+    # softer than №1 is flagged instead (core/rank.py:BURST_SOFTER_RATIO).
+    ranked = flag_softer(_rank_burst(all_scores))
     for item in ranked:
         item.pop("path", None)
     return {
-        "mode":               "burst",
-        "burst_weights":      BURST_WEIGHTS,
-        "blur_threshold":     _BLUR_THRESHOLD,
-        "blur_gate_bypassed": blur_gate_bypassed,
-        "total_photos":       len(photos),
-        "scored_photos":      len(sharp),
-        "skipped_blurry":     0 if blur_gate_bypassed else len(blurry_ids),
-        "ranked":             ranked,
-        "left_out":           [] if blur_gate_bypassed else _blurry(all_scores),
+        "mode":          "burst",
+        "burst_weights": BURST_WEIGHTS,
+        "softer_ratio":  BURST_SOFTER_RATIO,
+        "total_photos":  len(photos),
+        "scored_photos": len(all_scores),
+        "ranked":        ranked,
+        "left_out":      [],  # only unreadable / unscorable photos; _left_out adds them
     }
 
 

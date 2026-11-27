@@ -16,6 +16,12 @@
 // index.html at a new bundle name, brings the page "back to the front", taps
 // New batch, then deploys again and brings the upload screen back to the front.
 // It reports which bundle the page was running at each step.
+//
+// `viewer: true` exercises the full-screen viewer on the fresh result with real
+// touch input (Chromium DevTools touch events): open from №1, swipe through
+// every photo, pinch to zoom, arrow keys, Escape, open from a runner-up and a
+// left-out thumbnail, swipe down to close; then checks nothing opens on the
+// restored result.
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -108,6 +114,7 @@ async function readResults() {
         shows: shows(img),
         width: img?.naturalWidth ?? null,
         note: card.querySelector(".rank-blurb").textContent,
+        flag: card.querySelector(".rank-flag")?.textContent ?? null,
       });
     }
     const save = document.querySelector(".results-footer .btn-primary");
@@ -124,6 +131,9 @@ async function readResults() {
       cards,
       leftOut,
       meta: document.querySelector(".results-meta").textContent,
+      explainer: document.querySelector(".burst-explainer")?.textContent.trim() ?? null,
+      switcherShown: document.querySelector(".rerank") !== null,
+      openers: document.querySelectorAll(".photo-open, .thumb-open").length,
       rankedBy: document.querySelector(".hero-card .label-main").textContent,
       saveEnabled: !save.disabled,
       saveLook: { opacity: Number(style.opacity), cursor: style.cursor },
@@ -161,8 +171,93 @@ if (await page.locator(".rerank").count()) {
   }
 }
 
+// The full-screen viewer (see the header).
+let viewer = null;
+if (spec.viewer) {
+  const cdp = await context.newCDPSession(page);
+  const touch = (type, points) =>
+    cdp.send("Input.dispatchTouchEvent", {
+      type, touchPoints: points.map(([x, y], id) => ({ x, y, id })),
+    });
+  const gesture = async (from, to) => {
+    await touch("touchStart", from);
+    for (let i = 1; i <= 10; i++) {
+      await touch("touchMove", from.map(([x, y], k) => [
+        x + ((to[k][0] - x) * i) / 10, y + ((to[k][1] - y) * i) / 10,
+      ]));
+    }
+    await touch("touchEnd", []);
+    await page.waitForTimeout(150);
+  };
+  const { width: W, height: H } = page.viewportSize();
+  const state = () => page.evaluate(() => {
+    const v = document.querySelector(".viewer");
+    if (!v) return null;
+    const img = v.querySelector(".viewer-img");
+    return {
+      index: Number(v.dataset.index),
+      title: v.querySelector(".viewer-title").textContent,
+      name: v.querySelector(".viewer-name").textContent,
+      flag: v.querySelector(".viewer-flag")?.textContent ?? null,
+      count: v.querySelector(".viewer-count").textContent.trim(),
+      scale: Number(v.querySelector(".viewer-stage").dataset.scale),
+      width: img?.naturalWidth ?? null,
+      focus: document.activeElement?.getAttribute("aria-label") ?? null,
+    };
+  });
+  const loaded = () => page.waitForFunction(() => {
+    const img = document.querySelector(".viewer-img");
+    return !img || (img.complete && img.naturalWidth > 0);
+  });
+
+  viewer = { slides: [] };
+  // The order on screen now (the profile switcher may have re-ranked it).
+  viewer.order = await page.evaluate(() => [
+    document.querySelector(".hero-card .placeholder-tag").textContent,
+    ...[...document.querySelectorAll(".rank-card:not(.left-out-card) .rank-sub")].map((e) => e.textContent),
+    ...[...document.querySelectorAll(".left-out-card .rank-sub")].map((e) => e.textContent),
+  ]);
+  await page.locator(".hero-card .photo-open").click();
+  await page.waitForSelector(".viewer");
+  await loaded();
+  viewer.slides.push(await state());
+  for (;;) {
+    const before = (await state()).index;
+    await gesture([[W * 0.8, H / 2]], [[W * 0.15, H / 2]]); // swipe left: next
+    await loaded();
+    const now = await state();
+    if (now.index === before) break;
+    viewer.slides.push(now);
+  }
+  await gesture([[W / 2 - 30, H / 2], [W / 2 + 30, H / 2]], [[W / 2 - 140, H / 2], [W / 2 + 140, H / 2]]);
+  viewer.pinched = (await state()).scale;
+  await page.keyboard.press("ArrowLeft");
+  viewer.afterArrowLeft = await state();
+  await page.keyboard.press("Escape");
+  viewer.afterEscape = await state();
+
+  await page.locator(".rank-card:not(.left-out-card) .thumb-open").first().click();
+  await page.waitForSelector(".viewer");
+  viewer.fromRunnerUp = await state();
+  await gesture([[W / 2, H * 0.3]], [[W / 2, H * 0.8]]); // swipe down: close
+  viewer.afterSwipeDown = await state();
+
+  if (await page.locator(".left-out-card .thumb-open").count()) {
+    await page.locator(".left-out-card .thumb-open").first().click();
+    await page.waitForSelector(".viewer");
+    viewer.fromLeftOut = await state();
+    await page.locator(".viewer-close").click();
+    viewer.afterClose = await state();
+  }
+}
+
 await page.reload();
 const restored = await readResults();
+if (viewer) {
+  await page.locator(".hero-card .hero-photo").click();
+  await page.waitForTimeout(300);
+  viewer.restoredOpens = (await page.locator(".viewer").count()) > 0;
+}
 
 // A deploy while the app stays open (see the header).
 let redeploy = null;
@@ -203,5 +298,5 @@ if (spec.redeploy) {
   redeploy.afterResume = await running();
 }
 
-console.log(JSON.stringify({ mode, response, rankRequests, fresh, switcher, restored, redeploy, errors }));
+console.log(JSON.stringify({ mode, response, rankRequests, fresh, switcher, restored, redeploy, viewer, errors }));
 await browser.close();

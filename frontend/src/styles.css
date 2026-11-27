@@ -926,6 +926,7 @@ body {
 }
 
 .rank-card {
+  position: relative; /* for .thumb-open over the thumbnail */
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -1208,6 +1209,175 @@ body {
   font-size: 12.5px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+/* Burst results: one line where the profile switcher would be. */
+.burst-explainer {
+  margin: 10px 22px 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* A burst frame far softer than №1 (softer_than_top). */
+.rank-flag {
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  color: oklch(0.45 0.09 60); /* --warn, darkened for contrast on --surface */
+}
+
+/* Tap targets that open the full-screen viewer, laid over the photo. */
+.hero-photo .photo-open {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+.hero-photo .hero-rank-badge,
+.hero-photo .placeholder-tag {
+  z-index: 2;
+  pointer-events: none;
+}
+.thumb-open {
+  position: absolute;
+  top: 12px;
+  left: 56px; /* .rank-row padding 14 + position 28 + gap 14 */
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  cursor: zoom-in;
+}
+.photo-open:focus-visible,
+.thumb-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- Full-screen photo viewer ---------- */
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #0b0b0a;
+  color: #f6f4ef;
+  overscroll-behavior: contain;
+}
+.viewer-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none; /* we handle pinch, pan and swipe */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.viewer-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform-origin: center;
+  will-change: transform;
+  -webkit-user-drag: none;
+}
+.viewer-missing {
+  padding: 24px;
+  text-align: center;
+  font-size: 14px;
+  color: rgba(246, 244, 239, 0.7);
+}
+.viewer-top,
+.viewer-nav {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  gap: 12px;
+  pointer-events: none; /* gestures reach the stage; buttons opt back in */
+}
+.viewer-top > *,
+.viewer-nav > * {
+  pointer-events: auto;
+}
+.viewer-top {
+  top: 0;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: calc(12px + env(safe-area-inset-top)) 16px 32px;
+  background: linear-gradient(rgba(0, 0, 0, 0.65), transparent);
+}
+.viewer-title {
+  font-family: "Geist Mono", monospace;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+.viewer-detail {
+  margin-top: 4px;
+  max-width: 34ch;
+  font-size: 13px;
+  line-height: 1.35;
+  color: rgba(246, 244, 239, 0.85);
+}
+.viewer-name {
+  margin-top: 4px;
+  font-family: "Geist Mono", monospace;
+  font-size: 10px;
+  color: rgba(246, 244, 239, 0.55);
+  overflow-wrap: anywhere;
+}
+.viewer-close,
+.viewer-nav button {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid rgba(246, 244, 239, 0.3);
+  background: rgba(0, 0, 0, 0.4);
+  color: #f6f4ef;
+  font: inherit;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.viewer-nav button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.viewer-close:focus-visible,
+.viewer-nav button:focus-visible {
+  outline: 2px solid #f6f4ef;
+  outline-offset: 2px;
+}
+.viewer-nav {
+  bottom: 0;
+  justify-content: space-between;
+  align-items: center;
+  padding: 32px 16px calc(14px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
+}
+.viewer-count {
+  font-family: "Geist Mono", monospace;
+  font-size: 12px;
+  color: rgba(246, 244, 239, 0.8);
+}
+.viewer-flag {
+  position: absolute;
+  left: 16px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: oklch(0.8 0.1 70);
+  color: #14130f;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 /* ---------- Generic centered message (errors, offline-at-rank) ---------- */

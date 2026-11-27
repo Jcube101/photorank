@@ -4,7 +4,7 @@
 import Photo from "./Photo.jsx";
 import { leftOutReason } from "../lib/leftOut.js";
 
-export default function LeftOutCard({ entry, previewUrl, threshold }) {
+export default function LeftOutCard({ entry, previewUrl, threshold, onOpen }) {
   return (
     <div className="rank-card left-out-card">
       <div className="rank-row">
@@ -17,6 +17,13 @@ export default function LeftOutCard({ entry, previewUrl, threshold }) {
           <div className="rank-sub">{entry.photo_id}</div>
         </div>
       </div>
+      {onOpen && (
+        <button
+          className="thumb-open"
+          onClick={onOpen}
+          aria-label={`View ${entry.photo_id} full screen`}
+        />
+      )}
     </div>
   );
 }
