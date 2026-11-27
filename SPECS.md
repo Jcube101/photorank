@@ -624,10 +624,24 @@ renames it and the response `photo_id` maps back to the local preview. The same
 compressed blob is both uploaded and shown on screen, so the user sees exactly
 what was scored. HEIC is converted in the process (it is otherwise unrenderable
 in most browsers). Decoding uses `createImageBitmap`, and an `<img>` if that
-rejects (Android Chrome has rejected camera JPEGs it displays fine). If the
-photo still can't be re-encoded, the original is uploaded untouched and used as
-the preview; a card whose preview won't load (e.g. HEIC outside Safari) shows
-the gradient placeholder.
+rejects (Android Chrome has rejected camera JPEGs it displays fine). The
+original is **never** uploaded as-is. If the photo can't be re-encoded:
+
+- **JPEG:** every metadata segment is cut out of its bytes, without decoding
+  (`src/lib/stripJpeg.js`), and that is uploaded and previewed. It keeps only
+  SOI, SOFn, DHT, DAC, DQT, DRI, DNL, SOS with its entropy-coded data, EOI, and
+  a standard 12-byte Adobe APP14 (colour transform). Everything else goes:
+  every other APPn (JFIF, EXIF and XMP, ICC and MPF, IPTC, …), COM, unknown
+  markers, and all bytes after the first EOI (gain maps, Motion Photo
+  trailers). The pixels are unchanged; the EXIF orientation goes with the
+  rest, so a rotated photo arrives sideways.
+- **Anything else** (e.g. a HEIC the browser can't decode) is not uploaded.
+  The results screen names it: "Couldn't prepare IMG_0042.HEIC for upload, so
+  it wasn't ranked." If fewer than 2 photos are left, nothing is sent and the
+  error screen names them.
+
+The capture time is read from the original before any of this. A card whose
+image won't load shows the gradient placeholder.
 
 ### 9.4 Score breakdown rendering (the transparency contract)
 

@@ -25,6 +25,14 @@ from pathlib import Path
 import pytest
 
 from api import main as api
+from tests.exif_jpeg import (
+    COMMENT_TEXT,
+    GPS_LATITUDE,
+    IPTC_TEXT,
+    TRAILER_TEXT,
+    XMP_TEXT,
+    markers,
+)
 from tests.exif_jpeg import jpeg as exif_jpeg
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
@@ -101,8 +109,8 @@ def _drive(site: str, tmp_path: Path, monkeypatch, mode: str | None,
            photos: list[tuple[str, bytes]] | None = None, gemini=_fake_gemini,
            breaks: tuple[str, ...] = ()) -> dict:
     """
-    Upload `photos` [(name, jpeg bytes)] (default: NAMES at WIDTHS) and read the
-    results screen. `mode` forces the server's choice; None lets it decide.
+    Upload `photos` [(name, bytes) or (name, bytes, MIME type)] (default: NAMES
+    at WIDTHS) and read the results screen. `mode` forces the server's choice; None lets it decide.
     `gemini` stands in for score_photos. `breaks` makes the page's decoders
     fail (see tests/e2e/results_photos.mjs).
     """
@@ -112,10 +120,10 @@ def _drive(site: str, tmp_path: Path, monkeypatch, mode: str | None,
     if photos is None:
         photos = [(name, _jpeg(width, seed=i)) for i, (name, width) in enumerate(zip(NAMES, WIDTHS))]
     files = []
-    for i, (name, data) in enumerate(photos):
+    for i, (name, data, *mime) in enumerate(photos):
         path = tmp_path / f"upload-{i}.jpg"
         path.write_bytes(data)
-        files.append({"path": str(path), "name": name})
+        files.append({"path": str(path), "name": name, "type": mime[0] if mime else "image/jpeg"})
     proc = subprocess.run(
         ["node", str(DRIVER)], input=json.dumps({"url": site, "files": files, "break": list(breaks)}),
         capture_output=True, text=True, timeout=180, check=False,
@@ -141,11 +149,15 @@ def test_fresh_result_shows_each_photo_and_restored_shows_placeholders(
         assert card["shows"] == "photo", card
         assert card["width"] == width_of[card["id"]], card
     assert fresh["saveEnabled"]
+    assert fresh["saveLook"] == {"opacity": 1, "cursor": "pointer"}
 
     restored = out["restored"]
     assert sorted(c["id"] for c in restored["cards"]) == sorted(IDS)
     assert {c["shows"] for c in restored["cards"]} == {"placeholder"}
     assert not restored["saveEnabled"]
+    # ... and it looks disabled, not just behaves so.
+    assert restored["saveLook"]["opacity"] <= 0.5
+    assert restored["saveLook"]["cursor"] == "not-allowed"
 
 
 def test_switching_profile_does_not_shift_the_layout(site, tmp_path, monkeypatch):
@@ -166,10 +178,10 @@ BURST_NAMES = ["1000330417.jpg", "1000330418.jpg", "1000330419.jpg", "1000330420
 
 
 def _spy_on_uploads(monkeypatch) -> dict:
-    """Record the capture_times field and the EXIF of each file the server got."""
+    """Record the capture_times field, and the bytes and EXIF of each file the server got."""
     from PIL import Image
 
-    seen = {"capture_times": None, "exif_tags": []}
+    seen = {"capture_times": None, "exif_tags": [], "raw": []}
     real_sent, real_ingest = getattr(api, "_sent_capture_times", None), api.ingest
 
     def sent(raw):
@@ -178,6 +190,7 @@ def _spy_on_uploads(monkeypatch) -> dict:
 
     def ingest(paths):
         for p in paths:
+            seen["raw"].append(Path(p).read_bytes())
             with Image.open(p) as im:
                 exif = im.getexif()
                 seen["exif_tags"].append(len(exif) + len(exif.get_ifd(0x8769)) + len(exif.get_ifd(0x8825)))
@@ -265,19 +278,77 @@ def test_burst_shows_each_photo_when_the_phone_cannot_decode_it(site, tmp_path, 
         assert seen["exif_tags"] == [0] * len(PHONE_NAMES)
 
 
-def test_a_photo_the_browser_cannot_display_shows_the_placeholder(site, tmp_path, monkeypatch):
-    """Like HEIC on Android Chrome: the server scores it, the phone can't show it."""
+# --- When compression fails, no metadata leaves the phone --------------------
+
+def _gps_bytes() -> list[bytes]:
+    import struct
+    return [struct.pack(bo + "II", v, 1) for bo in "<>" for v in GPS_LATITUDE]
+
+
+def test_failed_compression_sends_no_gps_and_no_exif(site, tmp_path, monkeypatch):
+    """
+    Phone photos with GPS (and XMP, IPTC, a comment, a Motion Photo trailer),
+    with compression forced to fail. The server must get the photos with none
+    of it, and burst mode must still trigger: the capture times are read from
+    the originals before they are cleaned.
+    """
+    seen = _spy_on_uploads(monkeypatch)
+    gemini, calls = _counting_gemini()
+    photos = [(name, exif_jpeg(width=w, seed=i, dto=t, blur=b, all_metadata=True))
+              for i, (name, t, w, b) in enumerate(zip(PHONE_NAMES, PHONE_TIMES, PHONE_WIDTHS, PHONE_BLUR))]
+    for _, data in photos:
+        assert _gps_bytes()[0] in data  # the originals carry GPS
+    out = _drive(site, tmp_path, monkeypatch, None, photos, gemini,
+                 breaks=("createImageBitmap", "imgDecode"))
+
+    assert len(seen["raw"]) == len(PHONE_NAMES)
+    assert seen["exif_tags"] == [0] * len(PHONE_NAMES)
+    for data in seen["raw"]:
+        for planted in (*_gps_bytes(), b"Exif", XMP_TEXT, IPTC_TEXT, COMMENT_TEXT, TRAILER_TEXT):
+            assert planted not in data, planted
+        assert not {0xE1, 0xE2, 0xED, 0xFE} & set(markers(data))  # no EXIF/XMP, ICC, IPTC, comment
+        assert data.endswith(b"\xff\xd9")  # nothing after the image
+    assert json.loads(seen["capture_times"]) == dict(zip(PHONE_NAMES, PHONE_TIMES))
+    assert out["mode"] == "burst"
+    assert calls == []
+    assert {c["shows"] for c in out["fresh"]["cards"]} == {"photo"}
+
+
+def _undecodable() -> bytes:
+    """Stands in for a HEIC on Android Chrome: no browser decoder, not a JPEG."""
     import cv2
     import numpy as np
 
-    noise = np.random.default_rng(9).integers(0, 256, (240, 300, 3), dtype=np.uint8)
-    ok, tiff = cv2.imencode(".tiff", noise)  # noise is sharp: it passes the blur gate
+    ok, tiff = cv2.imencode(".tiff", np.random.default_rng(9).integers(0, 256, (240, 300, 3), dtype=np.uint8))
     assert ok
-    photos = [(NAMES[0], _jpeg(WIDTHS[0], seed=0)), ("1000330499.jpg", tiff.tobytes()),
+    return tiff.tobytes()
+
+
+def test_a_photo_that_cannot_be_prepared_is_named_and_not_sent(site, tmp_path, monkeypatch):
+    seen = _spy_on_uploads(monkeypatch)
+    photos = [(NAMES[0], _jpeg(WIDTHS[0], seed=0)),
+              ("IMG_0042.HEIC", _undecodable(), "image/heic"),
               (NAMES[2], _jpeg(WIDTHS[2], seed=2))]
-    cards = {c["id"]: c for c in _drive(site, tmp_path, monkeypatch, "burst", photos)["fresh"]["cards"]}
-    assert cards["1000330499.jpg"]["shows"] == "placeholder"  # not a broken image
-    assert cards[NAMES[0]]["shows"] == cards[NAMES[2]]["shows"] == "photo"
+    out = _drive(site, tmp_path, monkeypatch, "burst", photos)
+
+    assert len(seen["raw"]) == 2  # the HEIC never left the phone
+    fresh = out["fresh"]
+    assert sorted(c["id"] for c in fresh["cards"]) == sorted([NAMES[0], NAMES[2]])
+    assert {c["shows"] for c in fresh["cards"]} == {"photo"}
+    assert fresh["notice"] == "Couldn't prepare IMG_0042.HEIC for upload, so it wasn't ranked."
+    assert out["restored"]["notice"] == fresh["notice"]  # still named after a restore
+
+
+def test_too_few_photos_left_shows_a_message_and_sends_nothing(site, tmp_path, monkeypatch):
+    photos = [(NAMES[0], _jpeg(WIDTHS[0], seed=0)), ("IMG_0042.HEIC", _undecodable(), "image/heic")]
+    out = _drive(site, tmp_path, monkeypatch, "burst", photos)
+    assert out["rankRequests"] == 0
+    assert out["fresh"]["message"] == {
+        "eyebrow": "Couldn't prepare",
+        "title": "Not enough photos to rank.",
+        "body": "Couldn't prepare IMG_0042.HEIC for upload, so only 1 photo is left to rank. "
+                "PhotoRank needs at least 2.",
+    }
 
 
 # Burst-note wording (frontend/src/lib/notes.js) -> the axis it is about.

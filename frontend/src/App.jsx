@@ -86,13 +86,16 @@ export default function App() {
   }, []);
 
   const handleDone = useCallback(
-    (res, previewMap) => {
-      setResult(res);
+    (res, previewMap, unprepared = []) => {
+      // Photos left out because they couldn't be prepared are named on the
+      // results screen, including after a restore.
+      const shown = unprepared.length ? { ...res, unprepared } : res;
+      setResult(shown);
       setPreviews(previewMap);
       setScreen("results");
       install.armAfterSuccess();
       try {
-        sessionStorage.setItem(RESULT_KEY, JSON.stringify(res));
+        sessionStorage.setItem(RESULT_KEY, JSON.stringify(shown));
       } catch {
         // Storage full/unavailable — non-fatal, just lose session continuity.
       }
@@ -102,9 +105,14 @@ export default function App() {
 
   const handleError = useCallback((err) => {
     const offline = err?.kind === "offline";
+    const unprepared = err?.kind === "unprepared";
     setError({
-      eyebrow: offline ? "Offline" : "Couldn't rank",
-      title: offline ? "You're offline." : "Something went wrong.",
+      eyebrow: offline ? "Offline" : unprepared ? "Couldn't prepare" : "Couldn't rank",
+      title: offline
+        ? "You're offline."
+        : unprepared
+          ? "Not enough photos to rank."
+          : "Something went wrong.",
       body:
         err?.message ||
         "Something went wrong while ranking. Please try again.",

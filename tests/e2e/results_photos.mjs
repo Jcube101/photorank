@@ -1,9 +1,11 @@
 // Headless-Chromium driver for tests/test_results_photos_e2e.py.
 //
-// Reads {url, files: [{path, name}], break?: [...]} as JSON on stdin, uploads
-// the files under those names on an emulated Android phone, and prints JSON
-// describing the results screen twice: fresh, then after a reload (restored
-// from sessionStorage). Prints {"skip": reason} if Chromium is not installed.
+// Reads {url, files: [{path, name, type?}], break?: [...]} as JSON on stdin,
+// uploads the files under those names on an emulated Android phone, and prints
+// JSON describing the results screen twice: fresh, then after a reload
+// (restored from sessionStorage). If the app shows a message screen instead of
+// results, `fresh` is {message} and there is no reload. Prints {"skip": reason}
+// if Chromium is not installed.
 //
 // `break` makes the page's image decoders fail the way they have on a real
 // Android phone: "createImageBitmap" rejects every photo, and "imgDecode"
@@ -43,9 +45,14 @@ const page = await context.newPage();
 const errors = [];
 page.on("pageerror", (err) => errors.push(err.message));
 
-// The /rank response, and the mode the server chose (burst or set).
+// The /rank response, the mode the server chose (burst or set), and how many
+// times /rank was called.
 let mode = null;
 let response = null;
+let rankRequests = 0;
+page.on("request", (req) => {
+  if (req.method() === "POST" && new URL(req.url()).pathname === "/rank") rankRequests += 1;
+});
 page.on("response", async (res) => {
   if (res.request().method() === "POST" && new URL(res.url()).pathname === "/rank") {
     response = await res.json().catch(() => null);
@@ -56,7 +63,16 @@ page.on("response", async (res) => {
 // Each result card: its photo_id, what it shows (the photo with its pixel
 // width, the gradient placeholder, or a broken image) and its note.
 async function readResults() {
-  await page.waitForSelector(".hero-card", { timeout: 60_000 });
+  await page.waitForSelector(".hero-card, .message-screen", { timeout: 60_000 });
+  if (await page.locator(".message-screen").count()) {
+    return {
+      message: await page.locator(".message-screen").evaluate((m) => ({
+        eyebrow: m.querySelector(".ms-eyebrow").textContent,
+        title: m.querySelector(".ms-title").textContent,
+        body: m.querySelector(".ms-body").textContent,
+      })),
+    };
+  }
   // Every image loads, or fails and is swapped for the placeholder. A broken
   // image that stays on screen times out here and is reported as "broken".
   await page
@@ -89,17 +105,30 @@ async function readResults() {
       });
     }
     const save = document.querySelector(".results-footer .btn-primary");
-    return { cards, saveEnabled: !save.disabled };
+    const style = getComputedStyle(save);
+    return {
+      cards,
+      saveEnabled: !save.disabled,
+      saveLook: { opacity: Number(style.opacity), cursor: style.cursor },
+      notice: document.querySelector(".prep-notice")?.textContent ?? null,
+    };
   });
 }
 
 await page.goto(spec.url);
 await page.setInputFiles(
   'input[type="file"]',
-  spec.files.map((f) => ({ name: f.name, mimeType: "image/jpeg", buffer: fs.readFileSync(f.path) })),
+  spec.files.map((f) => ({
+    name: f.name, mimeType: f.type ?? "image/jpeg", buffer: fs.readFileSync(f.path),
+  })),
 );
 await page.getByRole("button", { name: `Rank ${spec.files.length} photos` }).click();
 const fresh = await readResults();
+if (fresh.message) {
+  console.log(JSON.stringify({ mode, response, rankRequests, fresh, switcher: null, restored: null, errors }));
+  await browser.close();
+  process.exit(0);
+}
 
 // Profile switcher (set mode only): where the hero card sits under each
 // profile, whether the reset link shows, and whether any note appeared.
@@ -118,5 +147,5 @@ if (await page.locator(".rerank").count()) {
 await page.reload();
 const restored = await readResults();
 
-console.log(JSON.stringify({ mode, response, fresh, switcher, restored, errors }));
+console.log(JSON.stringify({ mode, response, rankRequests, fresh, switcher, restored, errors }));
 await browser.close();

@@ -430,10 +430,6 @@ body {
   cursor: pointer;
   transition: opacity 0.15s;
 }
-.upload-cta:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
 
 .footnote {
   margin-top: auto;
@@ -1182,6 +1178,28 @@ body {
   background: var(--ink);
   color: var(--bg);
   border: 1px solid var(--ink);
+}
+
+/* Every disabled button looks disabled ("Save winner" on a restored result
+   once looked exactly like an enabled one). The .pr-app prefix outranks
+   per-component rules such as `.results-footer button`. */
+.pr-app button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Photos that couldn't be prepared for upload, named on the results screen. */
+.prep-notice {
+  margin: 10px 22px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 /* ---------- Generic centered message (errors, offline-at-rank) ---------- */

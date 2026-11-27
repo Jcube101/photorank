@@ -14,6 +14,7 @@ import { PROFILES, PROFILE_WEIGHTS, profileName } from "../config.js";
 import { rerankByProfile } from "../lib/rerank.js";
 import { buildBreakdown } from "../lib/breakdown.js";
 import { fallbackNotes } from "../lib/notes.js";
+import { unpreparedNotice } from "../lib/unprepared.js";
 
 export default function ResultsScreen({ result, previews, onRestart }) {
   const canSwitch = result.mode === "set";
@@ -96,6 +97,12 @@ export default function ResultsScreen({ result, previews, onRestart }) {
               {profLabel} · {totalPhotos} photos
             </div>
           </div>
+
+          {result.unprepared?.length > 0 && (
+            <div className="prep-notice" role="status">
+              {unpreparedNotice(result.unprepared)}
+            </div>
+          )}
 
           {canSwitch && (
             <div className="rerank">
