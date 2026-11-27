@@ -491,7 +491,8 @@ Rank a batch of photos.
 | `profile` | string | No | `family` (default), `portrait`, `event`, `travel`, or `custom` |
 | `mode` | string | No | `burst` or `set`. When omitted, auto-detected from capture times |
 | `weights` | string (JSON) | If `custom` | JSON object with all six axes summing to 1.0 |
-| `capture_times` | string (JSON) | No | `{"<filename>": "YYYY:MM:DD HH:MM:SS"}`: each photo's EXIF `DateTimeOriginal`, keyed by its upload filename. The PWA reads it before compression strips EXIF. Nothing else from EXIF is ever sent. |
+| `capture_times` | string (JSON) | No | `{"<filename>": "YYYY:MM:DD HH:MM:SS"}`: each photo's EXIF `DateTimeOriginal`, keyed by its upload filename. The PWA reads it before compression strips EXIF. |
+| `orientations` | string (JSON) | No | `{"<filename>": 6}`: the EXIF Orientation (1–8) of a photo uploaded with its metadata stripped. Ingest turns that photo's pixels upright before scoring, ignoring any orientation left in the file, so it is never turned twice. Other values and malformed JSON are ignored. Never logged, returned or stored. These two fields are the only EXIF values ever sent. |
 
 **Auto-detection rule (when `mode` is omitted):** If ≤6 photos are uploaded and
 all their capture times are within 10 seconds of each other, burst mode is used.
@@ -613,6 +614,11 @@ graceful `error` state.
   first 128 KB of the **original** file, before compression strips EXIF. It reads
   no other tag and never follows the GPS pointer. JPEG only: HEIC and anything
   unreadable send no time, so the server falls back to set mode.
+- `orientations` — `{upload name: 2–8}`, only for photos uploaded with their
+  metadata stripped (§9.3) whose EXIF Orientation (tag 0x0112, IFD0, read by
+  the same reader) is not 1. A compressed photo never sends it: the browser
+  applies the orientation when decoding, so it is upright already. Left out
+  when empty.
 
 ### 9.3 Client-side compression
 
@@ -633,8 +639,10 @@ original is **never** uploaded as-is. If the photo can't be re-encoded:
   a standard 12-byte Adobe APP14 (colour transform). Everything else goes:
   every other APPn (JFIF, EXIF and XMP, ICC and MPF, IPTC, …), COM, unknown
   markers, and all bytes after the first EOI (gain maps, Motion Photo
-  trailers). The pixels are unchanged; the EXIF orientation goes with the
-  rest, so a rotated photo arrives sideways.
+  trailers). The pixels are unchanged. The EXIF orientation goes with the
+  rest, so the app sends it in `orientations` (§9.2) and the server turns the
+  photo upright before scoring. The preview is the original, which the phone
+  shows upright.
 - **Anything else** (e.g. a HEIC the browser can't decode) is not uploaded.
   The results screen names it: "Couldn't prepare IMG_0042.HEIC for upload, so
   it wasn't ranked." If fewer than 2 photos are left, nothing is sent and the

@@ -13,7 +13,7 @@ import { MIN_FILES, profileName } from "../config.js";
 import { compressImage } from "../compress.js";
 import { rankPhotos } from "../api.js";
 import { uploadNames } from "../lib/uploadNames.js";
-import { readCaptureTime } from "../lib/captureTime.js";
+import { readPhotoTags } from "../lib/captureTime.js";
 import { tooFewMessage } from "../lib/unprepared.js";
 
 export default function LoadingScreen({ files, profile, onDone, onError, onBack }) {
@@ -46,14 +46,18 @@ export default function LoadingScreen({ files, profile, onDone, onError, onBack 
         // that the server echoes back as its photo_id (lib/uploadNames.js).
         const previewMap = new Map();
         const names = uploadNames(files.map((f) => f.name));
-        // upload name → "YYYY:MM:DD HH:MM:SS", for burst detection. Read from
-        // the original, before compression or stripping drops EXIF. Nothing
-        // else from EXIF is sent.
+        // upload name → "YYYY:MM:DD HH:MM:SS", for burst detection, and
+        // upload name → EXIF orientation (2–8) for photos uploaded stripped,
+        // so the server can turn them upright. Both are read from the original,
+        // before compression or stripping drops EXIF. Nothing else from EXIF
+        // is sent. A compressed photo is already upright (the browser applies
+        // the orientation when decoding), so its orientation is never sent.
         const captureTimes = {};
+        const orientations = {};
         // Upload names of photos that couldn't be prepared, so aren't sent.
         const unprepared = [];
         for (const [i, f] of files.entries()) {
-          const time = await readCaptureTime(f);
+          const { time, orientation } = await readPhotoTags(f);
           const r = await compressImage(f, names[i]);
           if (cancelled) {
             if (r.previewUrl) URL.revokeObjectURL(r.previewUrl);
@@ -62,6 +66,7 @@ export default function LoadingScreen({ files, profile, onDone, onError, onBack 
           if (r.file) {
             compressed.push(r.file);
             if (time) captureTimes[r.name] = time;
+            if (r.status === "stripped" && orientation > 1) orientations[r.name] = orientation;
             previewMap.set(r.name, r.previewUrl);
             createdUrls.push(r.previewUrl);
           } else {
@@ -79,6 +84,7 @@ export default function LoadingScreen({ files, profile, onDone, onError, onBack 
         const result = await rankPhotos(compressed, profile, {
           signal: controller.signal,
           captureTimes,
+          orientations,
         });
         if (cancelled) return;
 

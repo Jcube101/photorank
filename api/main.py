@@ -112,6 +112,26 @@ def _sent_capture_times(raw: Optional[str]) -> dict[str, str]:
     return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
 
 
+# The PWA uploads a photo with its metadata stripped when it can't compress it,
+# which drops the EXIF orientation, so a rotated photo arrives sideways. For
+# those photos only, it sends the orientation in the `orientations` field:
+# {photo_id: 2-8}. Ingest turns them upright before scoring, so face detection
+# sees faces the right way up. Never logged, returned or stored.
+
+def _sent_orientations(raw: Optional[str]) -> dict[str, int]:
+    """The orientations field as {photo_id: 1-8}. Anything malformed is ignored."""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items()
+            if isinstance(k, str) and type(v) is int and 1 <= v <= 8}
+
+
 def _parse_capture_time(value: Optional[str]) -> Optional[int]:
     """'YYYY:MM:DD HH:MM:SS' (EXIF DateTimeOriginal) as epoch ms, or None."""
     if not isinstance(value, str):
@@ -188,6 +208,7 @@ async def rank_endpoint(
     mode: Optional[str] = Form(None),
     weights: Optional[str] = Form(None),
     capture_times: Optional[str] = Form(None),
+    orientations: Optional[str] = Form(None),
 ) -> JSONResponse:
     # --- Input validation ---
     _t_req = time.perf_counter()
@@ -249,7 +270,11 @@ async def rank_endpoint(
         # --- Ingest: cv2.imread + cv2.imwrite strips EXIF automatically ---
         _t_ingest = time.perf_counter()
         try:
-            photos, ingest_temp_dir = ingest(upload_paths)
+            turn = _sent_orientations(orientations)
+            photos, ingest_temp_dir = ingest(
+                upload_paths,
+                orientations={p: turn[name] for p, name in upload_info if name in turn},
+            )
         except ValueError as exc:
             raise _reject(422, str(exc))
         logger.info("[perf] ingest: %.2fs (%d photos)", time.perf_counter() - _t_ingest, len(photos))

@@ -8,7 +8,7 @@ writes) and odd layouts can be tested.
 
 import struct
 
-ASCII, LONG, RATIONAL = 2, 4, 5
+ASCII, SHORT, LONG, RATIONAL = 2, 3, 4, 5
 GPS_LATITUDE = (12, 58, 30)  # degrees, minutes, seconds: must never leave the phone
 
 # Text planted in each other kind of metadata, so a test can search for it.
@@ -23,10 +23,12 @@ def _ascii(text: str) -> bytes:
 
 
 def _tiff(dto: str | None, bo: str, gps: bool, dto_in_ifd0: bool,
-          gps_pointer: int | None = None) -> bytes:
-    """TIFF block: IFD0 -> Exif IFD (DateTimeOriginal) and, if gps, GPS IFD."""
+          gps_pointer: int | None = None, orientation: int | None = None) -> bytes:
+    """TIFF block: IFD0 (Orientation) -> Exif IFD (DateTimeOriginal) and, if gps, GPS IFD."""
     lat = b"".join(struct.pack(bo + "II", v, 1) for v in GPS_LATITUDE)
     ifd0 = [(0x010F, ASCII, _ascii("TestCam"))]
+    if orientation is not None:
+        ifd0.append((0x0112, SHORT, struct.pack(bo + "H", orientation)))
     exif = [(0x9291, ASCII, _ascii("42"))]  # SubSecTimeOriginal
     if dto is not None:
         (ifd0 if dto_in_ifd0 else exif).append((0x9003, ASCII, _ascii(dto)))
@@ -52,7 +54,7 @@ def _tiff(dto: str | None, bo: str, gps: bool, dto_in_ifd0: bool,
             if payload is None:
                 out += struct.pack(bo + "HHII", tag, LONG, 1, pointer[tag])
                 continue
-            count = len(payload) // 8 if typ == RATIONAL else len(payload)
+            count = {RATIONAL: len(payload) // 8, SHORT: len(payload) // 2}.get(typ, len(payload))
             if len(payload) <= 4:
                 out += struct.pack(bo + "HHI", tag, typ, count) + payload.ljust(4, b"\0")
             else:
@@ -72,7 +74,8 @@ def jpeg(width: int = 320, seed: int = 0, dto: str | None = None, *, byteorder: 
          dto_in_ifd0: bool = False, exif: bool = True,
          gps_pointer: int | None = None, blur: float = 0,
          all_metadata: bool = False, adobe: bool = False,
-         progressive: bool = False, restart: int = 0) -> bytes:
+         progressive: bool = False, restart: int = 0, orientation: int | None = None,
+         height: int = 240) -> bytes:
     """
     A noise JPEG; with `exif`, an EXIF APP1 right after SOI (after any padding/XMP).
     `blur` (a Gaussian sigma) softens it, so photos in a set score differently.
@@ -80,12 +83,13 @@ def jpeg(width: int = 320, seed: int = 0, dto: str | None = None, *, byteorder: 
     planted text: XMP (APP1), an ICC profile (APP2), IPTC (APP13), a comment
     (COM), and a trailer after the end of the image, as Motion Photos have.
     `adobe` adds a standard Adobe APP14; `progressive` and `restart` (a restart
-    interval in MCUs) change how the image data is coded.
+    interval in MCUs) change how the image data is coded. `orientation` adds
+    the EXIF Orientation tag (1-8) to IFD0; the pixels are stored as given.
     """
     import cv2
     import numpy as np
 
-    noise = np.random.default_rng(seed).integers(0, 256, (240, width, 3), dtype=np.uint8)
+    noise = np.random.default_rng(seed).integers(0, 256, (height, width, 3), dtype=np.uint8)
     if blur:
         noise = cv2.GaussianBlur(noise, (0, 0), blur)
     params = []
@@ -102,7 +106,8 @@ def jpeg(width: int = 320, seed: int = 0, dto: str | None = None, *, byteorder: 
     if xmp_first:
         head += _segment(0xE1, b"http://ns.adobe.com/xap/1.0/\0<x:xmpmeta/>")
     if exif:
-        head += _segment(0xE1, b"Exif\0\0" + _tiff(dto, byteorder, gps, dto_in_ifd0, gps_pointer))
+        head += _segment(0xE1, b"Exif\0\0" + _tiff(dto, byteorder, gps, dto_in_ifd0, gps_pointer,
+                                                    orientation))
     tail = b""
     if all_metadata:
         head += _segment(0xE1, b"http://ns.adobe.com/xap/1.0/\0" + XMP_TEXT)

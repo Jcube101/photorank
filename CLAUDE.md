@@ -218,7 +218,7 @@ photorank/
     │   ├── lib/unprepared.js     ← wording for photos that couldn't be prepared for upload
     │   ├── lib/rerank.js         ← client-side profile re-rank (mirrors rank_photos)
     │   ├── lib/uploadNames.js    ← unique upload names (the server echoes them as photo_id)
-    │   ├── lib/captureTime.js    ← EXIF DateTimeOriginal from the original file (burst detection)
+    │   ├── lib/captureTime.js    ← EXIF DateTimeOriginal + Orientation from the original file
     │   ├── screens/              ← UploadScreen, LoadingScreen, ResultsScreen
     │   └── components/           ← HeroCard, RankCard, Photo, AxisBar, MessageScreen
     └── _design/                  ← archived Claude Design reference (NOT production)
@@ -440,9 +440,12 @@ near-black `--ink`, olive `--accent`).
   result showed the placeholder (LEARNINGS 2026-11-27). If `createImageBitmap`
   rejects a photo (it has on Android Chrome, for camera JPEGs), it decodes
   through an `<img>` instead. If re-encoding still fails, a JPEG is uploaded
-  with its metadata stripped (`src/lib/stripJpeg.js`, no decoding; the
-  orientation tag goes too, so a rotated photo is scored and shown sideways),
-  and that file is the preview. Anything else is not uploaded: the results
+  with its metadata stripped (`src/lib/stripJpeg.js`, no decoding). That drops
+  the orientation tag, so for these photos only the app sends the orientation
+  (`orientations`) and ingest turns them upright before scoring
+  (`core/ingest.py:apply_orientation`); the preview is the original, which the
+  phone shows upright. Never send it for a compressed photo: the browser
+  already decoded that one upright. Anything else is not uploaded: the results
   screen names it ("Couldn't prepare … for upload"), or the error screen does
   if fewer than 2 photos are left. The cards (`components/Photo.jsx`) show the
   gradient placeholder when an image won't load.
@@ -494,16 +497,23 @@ These cannot be relaxed for any reason:
    (Phase 2 responsibility — not yet implemented.)
 5. **Training consent is explicit.** If v2 ever collects data for training, it
    must be behind an explicit opt-in. Never assumed from usage.
-6. **Only the capture time leaves the phone from EXIF.** The PWA sends each
-   photo's `DateTimeOriginal` (`capture_times`, read from the original first)
-   for burst detection and no other EXIF tag, never GPS. **No upload carries
-   any metadata, and an original is never uploaded as-is.** Each photo goes up
-   as a canvas re-encode (which has none) or, if that fails, as the original
-   JPEG with every metadata segment cut out of its bytes (EXIF, XMP, ICC,
-   IPTC, comments, and anything after the image; `src/lib/stripJpeg.js`, an
+6. **Only two EXIF values ever leave the phone, each in its own field.**
+   - `capture_times`: each photo's `DateTimeOriginal`, for burst detection.
+   - `orientations`: the EXIF Orientation (a number 2–8), **only** for a photo
+     uploaded with its metadata stripped, so the server can turn it upright
+     before scoring. It says which way up the camera was held: not personal
+     data, and needed for correct face detection (Haar finds upright faces
+     only). Approved by the owner 2026-11-27.
+   Both are read from the original first (`src/lib/captureTime.js` reads those
+   two tags and no other, never GPS). **No upload carries any metadata, and an
+   original is never uploaded as-is.** Each photo goes up as a canvas
+   re-encode (which has none) or, if that fails, as the original JPEG with
+   every metadata segment cut out of its bytes (EXIF, XMP, ICC, IPTC,
+   comments, and anything after the image; `src/lib/stripJpeg.js`, an
    allowlist). A photo that can be neither (e.g. a HEIC the browser can't
    decode) is not uploaded; the app names it. The server never logs, returns
-   or stores capture times.
+   or stores capture times or orientations. Adding any other EXIF value needs
+   the owner's approval.
 
 ---
 
@@ -580,7 +590,9 @@ cd ~/projects/photorank && git checkout pre-pr-<number> && (cd frontend && npm c
 - `api/main.py:_photo_ids()` — photo_id per upload: the filename exactly as sent; only a missing or repeated name changes
 - `api/main.py:_auto_detect_mode()` — 'burst' if ≤6 photos all have capture times within 10 s, else 'set'; each time comes from the `capture_times` field, else the file's EXIF (Exif IFD, via `core/group.py:read_capture_time`)
 - `api/main.py:_sent_capture_times()` — parses the PWA's `capture_times` field; anything malformed is ignored (→ set mode)
-- `frontend/src/lib/captureTime.js:readCaptureTime()` — DateTimeOriginal from the first 128 KB of an original JPEG; reads no other tag
+- `frontend/src/lib/captureTime.js:readPhotoTags()` — DateTimeOriginal and Orientation from the first 128 KB of an original JPEG; reads no other tag
+- `core/ingest.py:apply_orientation()` — turns stored pixels upright for an EXIF orientation (1–8); `ingest(paths, orientations=)` applies it
+- `api/main.py:_sent_orientations()` — parses the PWA's `orientations` field (values 1–8 only; anything else ignored)
 - `frontend/src/lib/notes.js:fallbackNotes()` — one note per photo without a Gemini note, each true for its photo; `noteClaims()` is the same as data (tested)
 - `frontend/src/compress.js:compressImage()` — ~1.5 MP JPEG re-encode (`createImageBitmap`, else an `<img>`); on failure the JPEG with its metadata stripped; else `unprepared` (not uploaded)
 - `frontend/src/lib/stripJpeg.js:stripJpegMetadata()` — keeps only the segments a decoder needs (allowlist) and nothing after EOI; null if it can't

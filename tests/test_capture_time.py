@@ -78,3 +78,55 @@ def test_server_reads_the_same_time_from_the_exif_ifd(tmp_path, byteorder):
     ms, source = read_capture_time(path)
     assert source == "exif_subsec"
     assert ms == 1778670207000 + 420  # 2026-05-13 11:03:27.42, as if UTC
+
+
+# --- Orientation (sent only for photos uploaded with their metadata stripped) ---
+
+TAGS_SCRIPT = """
+const { readPhotoTags } = await import(process.argv[1]);
+const fs = await import("node:fs");
+const files = JSON.parse(fs.readFileSync(0, "utf8"));
+const out = {};
+for (const [name, path] of Object.entries(files)) {
+  out[name] = await readPhotoTags(new Blob([fs.readFileSync(path)]));
+}
+console.log(JSON.stringify(out));
+"""
+
+# name -> (jpeg bytes, {time, orientation} the phone should read)
+TAG_CASES = {
+    "android_ii": (jpeg(dto=TIME, orientation=6), {"time": TIME, "orientation": 6}),
+    "iphone_mm": (jpeg(dto=TIME, orientation=8, byteorder=">"), {"time": TIME, "orientation": 8}),
+    "upright": (jpeg(dto=TIME, orientation=1), {"time": TIME, "orientation": 1}),
+    "no_orientation": (jpeg(dto=TIME), {"time": TIME, "orientation": None}),
+    "orientation_without_time": (jpeg(dto=None, orientation=3), {"time": None, "orientation": 3}),
+    "out_of_range": (jpeg(dto=TIME, orientation=9), {"time": TIME, "orientation": None}),
+    "zero": (jpeg(dto=TIME, orientation=0), {"time": TIME, "orientation": None}),
+    "gps_pointer_unreadable": (jpeg(dto=TIME, orientation=6, gps_pointer=0x7FFFFF00),
+                               {"time": TIME, "orientation": 6}),
+    "no_exif": (jpeg(exif=False), {"time": None, "orientation": None}),
+    "not_a_jpeg": (b"\x89PNG\r\n\x1a\n" + b"\0" * 64, {"time": None, "orientation": None}),
+}
+
+
+@pytest.fixture(scope="module")
+def phone_tags(tmp_path_factory):
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    tmp = tmp_path_factory.mktemp("tags")
+    paths = {}
+    for name, (data, _) in TAG_CASES.items():
+        paths[name] = str(tmp / f"{name}.jpg")
+        Path(paths[name]).write_bytes(data)
+    proc = subprocess.run(
+        ["node", "--input-type=module", "-e", TAGS_SCRIPT, READER.as_uri()],
+        input=json.dumps(paths), capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.parametrize("name", TAG_CASES)
+def test_phone_reads_only_orientation_and_time(phone_tags, name):
+    # Exactly these two keys: the reader returns nothing else from EXIF.
+    assert phone_tags[name] == TAG_CASES[name][1]
