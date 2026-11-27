@@ -114,18 +114,19 @@ judged fine. Instead a frame is flagged `softer_than_top` ("Noticeably softer
 than №1") when its `blur_raw` is below **0.2 × №1's**
 (`core/rank.py:BURST_SOFTER_RATIO`, `flag_softer()`, API and CLI). The ratio
 comes from data; the reasoning is next to the constant and in LEARNINGS
-2026-11-27. "Left out" in burst mode means only unreadable or unscorable.
+2026-11-27. "Left out" means only unreadable or unscorable, in both modes.
 
 ### Set Mode (`--mode set`, default)
 
 For 7+ photos, or any varied photo set where semantic differences exist.
 
 **Layer 1 — deterministic (score_tech.py):** sharpness, exposure, blur_raw.
-Blur gate excludes images below threshold before Gemini is called. **The gate
-only thins a set — if every photo is below threshold it is bypassed and all are
-ranked anyway (`blur_gate_bypassed: true` in the response). A batch is only
-rejected when no image can be scored at all. Applies to set mode, in the API
-and the CLI. Burst mode has no blur gate (below).** See LEARNINGS.md.
+**No blur gate: every readable photo goes to Gemini and is ranked** (API and
+CLI, since 2026-11-27). Sharpness is already a weighted axis. A fixed
+`blur_raw < 100` cut dropped good photos, because absolute Laplacian variance
+doesn't transfer across lighting, scene and image size (LEARNINGS 2026-11-27).
+Set mode has no "softer" flag: its photos may be different scenes. A batch is
+only rejected when no image can be scored at all.
 
 **Layer 2 — semantic (score_vision.py, Gemini 3.8 Flash):** Only what Gemini
 can reliably judge across varied photos:
@@ -263,9 +264,6 @@ PYTHONPATH=. ./venv/bin/python core/rank.py --input /path/to/photos --profile fa
 # Custom weights (all six axes required)
 PYTHONPATH=. ./venv/bin/python core/rank.py --profile custom \
   --weights '{"sharpness":0.2,"exposure":0.1,"expression":0.25,"composition":0.2,"subject_focus":0.2,"camera_engagement":0.05}'
-
-# Tighten blur gate
-PYTHONPATH=. ./venv/bin/python core/rank.py --profile portrait --blur-threshold 150
 
 # Save output to output/
 PYTHONPATH=. ./venv/bin/python core/rank.py --profile family --output output/results.json
@@ -460,8 +458,8 @@ near-black `--ink`, olive `--accent`).
   if fewer than 2 photos are left. The cards (`components/Photo.jsx`) show the
   gradient placeholder when an image won't load.
 - **Every picked photo is on screen.** The API returns each upload exactly
-  once, in `ranked` or in `left_out` with a reason (`blurry` + `blur_raw`,
-  `unreadable`, `unscorable`; `api/main.py:_left_out`, SPECS §6.1). The results
+  once, in `ranked` or in `left_out` with a reason (`unreadable` or
+  `unscorable`; `api/main.py:_left_out`, SPECS §6.1). The results
   screen names every photo not ranked (that, photos the phone couldn't prepare,
   and any uploaded name in neither list) in a notice and under **Left out**
   (`src/lib/leftOut.js`), and the header counts ranked + left out. Never drop a

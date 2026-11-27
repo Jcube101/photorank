@@ -300,4 +300,15 @@ are equal.
 
 ---
 
+**Discovery:** Fixed absolute blur thresholds don't transfer. The same `blur_raw < 100` gate that dropped an indoor selfie burst's fine frames (59, 69, 99) sat in set mode too, where every photo below it was dropped before Gemini. Laplacian variance measures texture and noise as much as focus, so its absolute value moves with:
+- **Lighting:** the indoor selfie frames read 59–99 and were fine; a Samsung daylight burst reads 681–1867.
+- **Scene and camera:** the Wat Arun frames, on the Sony A7 III, run 78–3556 (median 329); the gate would have dropped 8 of 203 usable frames.
+- **Image size:** one photo measures 2084 at 0.75 MP, 1722 at 1.5 MP, 1685 at 3 MP and 736 at 6 MP. Another runs 229 down to 150.
+
+A threshold tuned on one camera, scene or resolution misfires on the next.
+**Impact:** Neither mode has a blur gate now. Set mode sends every readable photo to Gemini and ranks it (API and CLI; the CLI's `--blur-threshold` and `--no-blur-filter` are gone). Sharpness is already a weighted axis, so a soft photo ranks lower instead of disappearing. Set mode gets no relative "softer" flag either: unlike a burst, its photos may be different scenes, so their sharpness isn't comparable. Where a comparison is meaningful (burst mode), use a ratio within the set, never an absolute value. "Left out" now means only unreadable or unscorable. Test: `tests/test_set_no_gate.py`, a 7-photo set with frames at 58, 68 and 99, all ranked, through the API and the CLI.
+**Date:** 2026-11-27
+
+---
+
 *Add new entries above this line as discoveries are made.*

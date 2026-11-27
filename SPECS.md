@@ -19,8 +19,10 @@ full-image sharpness and exposure (from `score_tech.py`) plus face-region
 sharpness and exposure via OpenCV Haar cascade face detection. BURST_WEIGHTS
 are fixed: `face_sharpness 0.50 / sharpness 0.20 / face_exposure 0.20 / exposure 0.10`.
 
-**Set mode** uses the full two-layer pipeline: deterministic pre-filter
-(blur gate) then Gemini semantic scoring with profile weights.
+**Set mode** uses the full two-layer pipeline: deterministic scores
+(sharpness, exposure) then Gemini semantic scoring, combined with profile
+weights. Every readable photo is scored and ranked: neither mode has a blur
+gate (§3.1).
 
 In the CLI, the mode is selected explicitly via `--mode`. In the API (`POST /rank`),
 the `mode` field is optional: when omitted, the API auto-detects burst mode if ≤6
@@ -116,11 +118,21 @@ Reference calibration:
 | ~800 | ~5000 | ~7–8 (sharp) |
 | ~2000+ | ~12000+ | ~9–10 (very sharp) |
 
-`blur_raw` (raw Laplacian variance, unscaled) is also returned and used as the
-**set-mode** blur gate. Images where `blur_raw < blur_threshold` are excluded
-before Gemini is called. Default threshold: **100**.
+`blur_raw` (raw Laplacian variance, unscaled) is also returned. **No mode has
+a blur gate:** every readable photo is scored and ranked. Sharpness is already
+a weighted axis, so a soft photo ranks low without being dropped. A fixed
+absolute cut (`blur_raw < 100`, removed from burst mode and then set mode on
+2026-11-27) does not transfer across lighting, scene and image size:
 
-**Burst mode has no blur gate.** Every readable photo is ranked. A frame is
+| What changes | Effect on `blur_raw` |
+|---|---|
+| Camera and scene | The Sony A7 III's Wat Arun frames run 78–3556 (median 329). A Samsung daylight burst runs 681–1867. |
+| Lighting | An indoor selfie burst had fine frames at 59, 69 and 99. |
+| Image size | One photo measures 2084 at 0.75 MP, 1722 at 1.5 MP and 736 at 6 MP. |
+
+See LEARNINGS 2026-11-27.
+
+**Burst mode flags far-softer frames instead.** A frame is
 flagged `softer_than_top: true` ("Noticeably softer than №1") when its
 `blur_raw < 0.2 × №1's blur_raw` (`core/rank.py:BURST_SOFTER_RATIO`). The ratio
 comes from data (LEARNINGS 2026-11-27):
@@ -130,14 +142,10 @@ comes from data (LEARNINGS 2026-11-27):
 - **Visible blur:** a real frame blurred just visibly (Gaussian σ 0.75 px at
   1.5 MP) falls to 0.09–0.16.
 
-The threshold is measured against №1, so the label is always true.
-
-**Blur-gate fallback:** the gate _thins_ a set — it must never refuse to rank.
-If **every** photo is below the threshold (common for a small, uniformly-soft
-burst), the gate is bypassed: all photos are scored and ranked anyway, and the
-response carries `blur_gate_bypassed: true`. A request is only rejected when no
-image could be scored at all (corrupt/unreadable). This applies to the API and
-the CLI, in set mode (burst mode has no gate).
+The threshold is measured against №1, so the label is always true. Set mode
+has no such flag: its photos may be different scenes, so their sharpness is
+not comparable. A request is only rejected when no image could be scored at
+all (corrupt or unreadable).
 
 ### 3.2 Exposure
 
@@ -170,8 +178,9 @@ exposure         = clamp(brightness_score*0.5 + contrast_score*0.5 - clip_penalt
 }
 ```
 
-`blur_raw` (Laplacian variance) is used as the blur gate. `tenengrad_raw` is
-logged for diagnostic visibility when investigating sharpness scores.
+`blur_raw` (Laplacian variance) is the input to burst mode's softer flag
+(§3.1); it gates nothing. `tenengrad_raw` is logged for diagnostic visibility
+when investigating sharpness scores.
 
 ---
 
@@ -473,15 +482,13 @@ Rounded to 3 decimal places. When two photos have equal `final_score`,
 
 ```json
 {
-  "profile":            "family",
-  "weights":            {"sharpness": 0.15, "...": "..."},
-  "blur_threshold":     100.0,
-  "blur_gate_bypassed": false,
-  "total_photos":       24,
-  "scored_photos":      21,
-  "skipped_blurry":     3,
-  "ranked":             [/* array of per-photo objects, sorted by final_rank */],
-  "left_out":           [{"photo_id": "IMG_4830.jpg", "reason": "blurry", "blur_raw": 41.6}]
+  "mode":          "set",
+  "profile":       "family",
+  "weights":       {"sharpness": 0.15, "...": "..."},
+  "total_photos":  24,
+  "scored_photos": 23,
+  "ranked":        [/* array of per-photo objects, sorted by final_rank */],
+  "left_out":      [{"photo_id": "IMG_4830.jpg", "reason": "unreadable"}]
 }
 ```
 
@@ -535,13 +542,12 @@ in `left_out` (in upload order), so the app can name it. Each entry is
 
 | `reason` | Meaning |
 |---|---|
-| `blurry` | Below the blur threshold while other photos cleared it (the gate thinned the set). Has `blur_raw`. When the gate is bypassed, nothing is left out for blur. |
 | `unreadable` | Ingest couldn't decode it. |
 | `unscorable` | Scoring raised on it. |
 
-`skipped_blurry` (the count) stays for compatibility. (`api/main.py:_left_out`;
-a 5-photo burst once came back as 2 ranked photos and a bare count, so the
-app could not say which 3 were dropped.)
+Nothing is left out for blur: neither mode has a blur gate (§3.1).
+(`api/main.py:_left_out`. A 5-photo burst once came back as 2 ranked photos
+and a bare count, so the app could not say which 3 were dropped.)
 
 **Error responses:**
 
@@ -556,9 +562,8 @@ profile, mode, blur numbers only — never image content). All errors return
 structured JSON: `{"detail": "<message>"}`. Raw stack traces are never exposed
 to the client.
 
-**Note:** an all-below-threshold batch is **no longer** a 422 — the blur gate is
-bypassed and every photo is ranked, with `blur_gate_bypassed: true` in the
-response (see Section 3.1).
+**Note:** soft photos are never a 422 and never dropped. With no blur gate,
+every readable photo is scored and ranked (§3.1).
 
 **Cleanup guarantee:** Two nested `try/finally` blocks guarantee both the upload
 directory and the ingest temp directory are deleted even when scoring fails
@@ -720,10 +725,12 @@ The results screen shows every photo the user picked: ranked as a card, or
 named as left out (`src/lib/leftOut.js`). Left out are: photos the phone
 couldn't prepare (never sent, §9.3), the server's `left_out` (§6.1), and, as a
 safety net, any uploaded name the server returned in neither list ("Not
-returned by the server"). They are named in a notice at the top ("Too blurry
-to rank: a.jpg, b.jpg and c.jpg.") and listed under **Left out** after the
-runners-up, each with its photo and reason ("Too blurry to rank: blur check
-42, needs 100."). The header count is ranked + left out, so it always matches
+returned by the server"). They are named in a notice at the top ("The server
+couldn't read a.jpg.") and listed under **Left out** after the runners-up,
+each with its photo and reason ("The server couldn't read this photo."). Results
+saved before 2026-11-27 may still carry `blurry` entries; the app still words
+those ("Too blurry to rank: blur check 42, needs 100."). The header count is
+ranked + left out, so it always matches
 what is on screen. The app stores the names it uploaded with the result, so
 this survives a restore. Burst results say "Burst" / "Burst mode", never a
 profile (burst mode uses none).

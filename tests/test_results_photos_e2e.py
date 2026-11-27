@@ -537,11 +537,18 @@ def test_a_new_deploy_reaches_an_open_app(redeploy_site, tmp_path, monkeypatch):
 
 def test_full_screen_viewer(site, tmp_path, monkeypatch):
     # Larger than the compression target, so the original (1600 px wide) and the
-    # compressed preview (about 1414) differ. Set mode's blur gate leaves the last
-    # one out, so the viewer must show it last.
+    # compressed preview (about 1414) differ. The last one fails scoring, so it
+    # is left out, and the viewer must show it last.
     names = ["1000330417.jpg", "1000330418.jpg", "1000330419.jpg", "1000330420.jpg"]
-    photos = [(n, exif_jpeg(width=1600, height=1200, seed=i, blur=b))
-              for i, (n, b) in enumerate(zip(names, [1.0, 1.0, 1.0, 6.0]))]
+    photos = [(n, exif_jpeg(width=1600, height=1200, seed=i, blur=1.0)) for i, n in enumerate(names)]
+    real = api.compute_technical_scores
+
+    def fails_on_the_last(path, photo_id=None):
+        if photo_id == names[3]:
+            raise ValueError("Could not read image")
+        return real(path, photo_id=photo_id)
+
+    monkeypatch.setattr(api, "compute_technical_scores", fails_on_the_last)
     out = _drive(site, tmp_path, monkeypatch, "set", photos, viewer=True)
     v = out["viewer"]
     assert [e["photo_id"] for e in out["response"]["left_out"]] == [names[3]]

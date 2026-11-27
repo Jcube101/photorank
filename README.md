@@ -113,9 +113,6 @@ python core/rank.py --profile family
 # Point at a different folder
 python core/rank.py --input /path/to/photos --profile portrait
 
-# Tighten the blur gate (skip softer shots before Gemini)
-python core/rank.py --profile portrait --blur-threshold 150
-
 # Custom weights (all six axes must be provided and sum to 1.0)
 python core/rank.py --profile custom \
   --weights '{"sharpness":0.2,"exposure":0.1,"expression":0.25,"composition":0.2,"subject_focus":0.2,"camera_engagement":0.05}'

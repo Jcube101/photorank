@@ -4,8 +4,9 @@ with the reason (SPECS §6.1), so the app can name it.
 
 On 2026-11-27 a 5-photo burst came back as 2 ranked photos and the count
 `skipped_blurry: 3`: the blur gate had dropped 3 frames, and with no names the
-app could not say which. And the app's own wording (frontend/src/lib/leftOut.js),
-run under Node.
+app could not say which. Neither mode has a blur gate now; left out means
+unreadable or unscorable. And the app's own wording
+(frontend/src/lib/leftOut.js), run under Node.
 """
 
 import json
@@ -42,26 +43,6 @@ def _accounted_once(out: dict, uploaded: list[str]) -> None:
     ranked = [p["photo_id"] for p in out["ranked"]]
     left = [e["photo_id"] for e in out["left_out"]]
     assert sorted(ranked + left) == sorted(uploaded)  # each exactly once
-
-
-def test_set_mode_names_blurry_photos_with_their_blur_score(monkeypatch):
-    # Set mode keeps its fixed blur gate; burst mode has none (tests/test_burst_softer.py).
-    photos = [jpeg(seed=i, blur=b) for i, b in enumerate(BLUR)]
-    out = _rank(monkeypatch, photos, "set")
-    _accounted_once(out, NAMES)
-    assert sorted(p["photo_id"] for p in out["ranked"]) == sorted(NAMES[:2])
-    assert [e["photo_id"] for e in out["left_out"]] == NAMES[2:]  # in upload order
-    for entry in out["left_out"]:
-        assert entry["reason"] == "blurry"
-        assert entry["blur_raw"] < out["blur_threshold"]
-    assert out["skipped_blurry"] == 3
-
-
-def test_nothing_is_left_out_when_the_set_mode_blur_gate_is_bypassed(monkeypatch):
-    out = _rank(monkeypatch, [jpeg(seed=i, blur=2.5) for i in range(5)], "set")
-    assert out["blur_gate_bypassed"]
-    assert out["left_out"] == []
-    _accounted_once(out, NAMES)
 
 
 def test_an_unreadable_upload_is_named(monkeypatch):
