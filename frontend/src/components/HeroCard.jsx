@@ -7,7 +7,7 @@ import AxisBar from "./AxisBar.jsx";
 import Photo from "./Photo.jsx";
 import { buildBreakdown } from "../lib/breakdown.js";
 
-export default function HeroCard({ photo, previewUrl, rankedBy, fallbackNote }) {
+export default function HeroCard({ photo, previewUrl, rankedBy, fallbackNote, onOpen }) {
   const [open, setOpen] = useState(false);
 
   const { axes, total } = useMemo(
@@ -26,6 +26,9 @@ export default function HeroCard({ photo, previewUrl, rankedBy, fallbackNote }) 
     <div className={"hero-card" + (open ? " open" : "")}>
       <div className="hero-photo">
         <Photo className="hero-img" src={previewUrl} alt="Top-ranked photo" />
+        {onOpen && (
+          <button className="photo-open" onClick={onOpen} aria-label="View this photo full screen" />
+        )}
         <div className="hero-rank-badge">
           <span className="rank-num">№1</span>
           <span>Best shot</span>

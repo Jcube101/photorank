@@ -128,13 +128,15 @@ def _jpeg(width: int, seed: int) -> bytes:
 
 def _drive(site: str, tmp_path: Path, monkeypatch, mode: str | None,
            photos: list[tuple[str, bytes]] | None = None, gemini=_fake_gemini,
-           breaks: tuple[str, ...] = (), redeploy: Path | None = None) -> dict:
+           breaks: tuple[str, ...] = (), redeploy: Path | None = None,
+           viewer: bool = False) -> dict:
     """
     Upload `photos` [(name, bytes) or (name, bytes, MIME type)] (default: NAMES
     at WIDTHS) and read the results screen. `mode` forces the server's choice; None lets it decide.
     `gemini` stands in for score_photos. `breaks` makes the page's decoders
     fail, and `redeploy` (the served dist) deploys a new build while the app
-    stays open (see tests/e2e/results_photos.mjs).
+    stays open, and `viewer` drives the full-screen viewer (see
+    tests/e2e/results_photos.mjs).
     """
     if mode is not None:
         monkeypatch.setattr(api, "_auto_detect_mode", lambda *args: mode)
@@ -148,7 +150,8 @@ def _drive(site: str, tmp_path: Path, monkeypatch, mode: str | None,
         files.append({"path": str(path), "name": name, "type": mime[0] if mime else "image/jpeg"})
     proc = subprocess.run(
         ["node", str(DRIVER)], input=json.dumps({"url": site, "files": files, "break": list(breaks),
-                          "redeploy": {"dist": str(redeploy)} if redeploy else None}),
+                          "redeploy": {"dist": str(redeploy)} if redeploy else None,
+                          "viewer": viewer}),
         capture_output=True, text=True, timeout=180, check=False,
     )
     assert proc.returncode == 0, proc.stderr
@@ -485,33 +488,32 @@ def test_a_sideways_photo_is_scored_and_shown_upright(site, tmp_path, monkeypatc
     assert {c["width"] for c in out["fresh"]["cards"]} == {240}  # shown upright too
 
 
-# --- Every photo picked is on screen, ranked or named as left out -------------
-# 2026-11-27 18:11: a 5-photo burst showed 2 cards and nothing else. The
-# server's blur gate had dropped 3 frames and the app said nothing about them.
+# --- Burst ranks every photo; far-softer frames are flagged, not dropped ------
+# 2026-11-27: an indoor selfie burst lost frames at blur_raw 59, 69 and 99 to a
+# fixed gate (< 100) that the owner judged fine. Burst mode now ranks every
+# readable photo and flags a frame below 0.2 x №1's blur_raw (core/rank.py).
 
-BLURRY_BURST = [0, 0.6, 2.2, 2.4, 2.6]  # blur sigma: the last 3 fall below the gate
+SOFT_BURST = [0, 0.35, 2.2, 2.4, 2.6]  # blur sigma: the last 3 are far softer, below 100
 
 
-def test_a_burst_shows_every_photo_picked(site, tmp_path, monkeypatch):
+def test_a_burst_ranks_every_photo_and_flags_the_soft_ones(site, tmp_path, monkeypatch):
     photos = [(name, exif_jpeg(width=w, seed=i, dto=t, blur=b))
-              for i, (name, t, w, b) in enumerate(zip(PHONE_NAMES, PHONE_TIMES, PHONE_WIDTHS, BLURRY_BURST))]
+              for i, (name, t, w, b) in enumerate(zip(PHONE_NAMES, PHONE_TIMES, PHONE_WIDTHS, SOFT_BURST))]
     out = _drive(site, tmp_path, monkeypatch, None, photos)
     assert out["mode"] == "burst"
-    sharp, blurry = PHONE_NAMES[:2], PHONE_NAMES[2:]
+    ranked = out["response"]["ranked"]
+    flagged = {p["photo_id"] for p in ranked if p["softer_than_top"]}
+    assert flagged == set(PHONE_NAMES[2:])
+    assert min(p["blur_raw"] for p in ranked) < 100  # the old gate would have dropped these
 
     for screen in (out["fresh"], out["restored"]):
-        assert sorted(c["id"] for c in screen["cards"]) == sorted(sharp)
-        assert [c["id"] for c in screen["leftOut"]] == blurry  # in the order picked
-        for card in screen["leftOut"]:
-            assert card["reason"].startswith("Too blurry to rank: blur check "), card
-            assert card["reason"].endswith(", needs 100."), card
-        assert screen["notice"] == f"Too blurry to rank: {blurry[0]}, {blurry[1]} and {blurry[2]}."
-        assert screen["meta"] == "Burst · 5 photos"  # not "Custom"
-        assert screen["rankedBy"] == "Burst mode"
-    assert {c["shows"] for c in out["fresh"]["leftOut"]} == {"photo"}  # each one's own photo
-    left = {e["photo_id"]: e for e in out["response"]["left_out"]}
-    assert sorted(left) == sorted(blurry)
-    assert all(e["reason"] == "blurry" and e["blur_raw"] < 100 for e in left.values())
+        assert sorted(c["id"] for c in screen["cards"]) == sorted(PHONE_NAMES)  # all 5 ranked
+        assert screen["leftOut"] == [] and screen["notice"] is None
+        assert screen["meta"] == "Burst · 5 photos"
+        assert screen["explainer"] == "Burst: near-identical shots ranked on sharpness and exposure only."
+        assert not screen["switcherShown"]
+        for card in screen["cards"]:
+            assert card.get("flag") == ("Noticeably softer than №1" if card["id"] in flagged else None), card
 
 
 # --- A deploy reaches an app that stays open ----------------------------------
@@ -529,3 +531,42 @@ def test_a_new_deploy_reaches_an_open_app(redeploy_site, tmp_path, monkeypatch):
     assert r["afterNewBatch"] == r["first"]
     # Back to the front on the upload screen, nothing picked: it reloads.
     assert r["afterResume"] == r["second"]
+
+
+# --- Full-screen photo viewer --------------------------------------------------
+
+def test_full_screen_viewer(site, tmp_path, monkeypatch):
+    # Larger than the compression target, so the original (1600 px wide) and the
+    # compressed preview (about 1414) differ. Set mode's blur gate leaves the last
+    # one out, so the viewer must show it last.
+    names = ["1000330417.jpg", "1000330418.jpg", "1000330419.jpg", "1000330420.jpg"]
+    photos = [(n, exif_jpeg(width=1600, height=1200, seed=i, blur=b))
+              for i, (n, b) in enumerate(zip(names, [1.0, 1.0, 1.0, 6.0]))]
+    out = _drive(site, tmp_path, monkeypatch, "set", photos, viewer=True)
+    v = out["viewer"]
+    assert [e["photo_id"] for e in out["response"]["left_out"]] == [names[3]]
+
+    # Every photo, in the order on screen: rank order, then left out.
+    slides = v["slides"]
+    assert [s["name"] for s in slides] == v["order"] and len(slides) == 4
+    assert v["order"][-1] == names[3]
+    assert [s["index"] for s in slides] == [0, 1, 2, 3]
+    assert slides[0]["title"].startswith("№1 · ") and slides[0]["title"].endswith("/10")
+    assert slides[1]["title"].startswith("№2 · ")
+    assert slides[3]["title"] == "Left out"
+    assert slides[0]["count"] == "1 / 4"
+    # The original, at full resolution, not the compressed preview.
+    assert {s["width"] for s in slides} == {1600}
+    assert slides[0]["focus"] == "Close"  # focus moved into the dialog
+
+    assert v["pinched"] > 1.5  # two-finger spread zooms in
+    assert v["afterArrowLeft"]["index"] == 2
+    assert v["afterEscape"] is None
+    assert v["fromRunnerUp"]["index"] == 1
+    assert v["afterSwipeDown"] is None
+    assert v["fromLeftOut"]["index"] == 3 and v["fromLeftOut"]["title"] == "Left out"
+    assert v["afterClose"] is None
+
+    # A result restored from sessionStorage has no photos: nothing opens.
+    assert out["restored"]["openers"] == 0
+    assert v["restoredOpens"] is False

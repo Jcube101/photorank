@@ -108,6 +108,14 @@ For 2–6 near-identical photos from the same moment. Gemini is skipped entirely
 
 **BURST_WEIGHTS**: face_sharpness 0.50, sharpness 0.20, face_exposure 0.20, exposure 0.10
 
+**No blur gate in burst mode: every readable photo is ranked.** A fixed
+`blur_raw < 100` cut dropped selfie frames at 59, 69 and 99 that the owner
+judged fine. Instead a frame is flagged `softer_than_top` ("Noticeably softer
+than №1") when its `blur_raw` is below **0.2 × №1's**
+(`core/rank.py:BURST_SOFTER_RATIO`, `flag_softer()`, API and CLI). The ratio
+comes from data; the reasoning is next to the constant and in LEARNINGS
+2026-11-27. "Left out" in burst mode means only unreadable or unscorable.
+
 ### Set Mode (`--mode set`, default)
 
 For 7+ photos, or any varied photo set where semantic differences exist.
@@ -116,8 +124,8 @@ For 7+ photos, or any varied photo set where semantic differences exist.
 Blur gate excludes images below threshold before Gemini is called. **The gate
 only thins a set — if every photo is below threshold it is bypassed and all are
 ranked anyway (`blur_gate_bypassed: true` in the response). A batch is only
-rejected when no image can be scored at all. Applies to both API and CLI, both
-modes.** See LEARNINGS.md.
+rejected when no image can be scored at all. Applies to set mode, in the API
+and the CLI. Burst mode has no blur gate (below).** See LEARNINGS.md.
 
 **Layer 2 — semantic (score_vision.py, Gemini 3.8 Flash):** Only what Gemini
 can reliably judge across varied photos:
@@ -222,7 +230,7 @@ photorank/
     │   ├── lib/uploadNames.js    ← unique upload names (the server echoes them as photo_id)
     │   ├── lib/captureTime.js    ← EXIF DateTimeOriginal + Orientation from the original file
     │   ├── screens/              ← UploadScreen, LoadingScreen, ResultsScreen
-    │   └── components/           ← HeroCard, RankCard, LeftOutCard, Photo, AxisBar, MessageScreen
+    │   └── components/           ← HeroCard, RankCard, LeftOutCard, Photo, PhotoViewer, AxisBar, MessageScreen
     └── _design/                  ← archived Claude Design reference (NOT production)
 ```
 
@@ -459,7 +467,17 @@ near-black `--ink`, olive `--accent`).
   (`src/lib/leftOut.js`), and the header counts ranked + left out. Never drop a
   photo silently: a burst once showed 2 of 5 cards because the blur gate had
   dropped 3 frames and only a count came back (LEARNINGS 2026-11-27). Burst
-  results say "Burst", never a profile.
+  results say "Burst", never a profile, and show one line where the profile
+  switcher would be: "Burst: near-identical shots ranked on sharpness and
+  exposure only."
+- **Full-screen viewer** (`components/PhotoViewer.jsx`): tap №1's photo or any
+  thumbnail. Pinch to zoom, swipe through every photo (rank order, left-out
+  last), swipe down or × to close; Escape and the arrow keys on a laptop. It
+  shows the **original** file the app still holds (full resolution, for judging
+  focus) via an object URL made per slide and revoked after, falling back to
+  the compressed preview. The originals live only in memory (`App.jsx`
+  `originals`), never in sessionStorage, and never leave the phone. A restored
+  result has neither, so nothing opens.
 - **Notes without Gemini** (every burst-mode photo): `src/lib/notes.js`
   compares each photo with the rest of the result, at the breakdown's one
   decimal. Only №1 is called the best at anything "in this set"; every other
@@ -588,6 +606,7 @@ cd ~/projects/photorank && git checkout pre-pr-<number> && (cd frontend && npm c
 - `core/score_vision.py:score_photos()` — Gemini semantic scoring (set and shoot modes); labels photos by position, returns one row per `photo_ids` entry in order, or raises
 - `core/rank.py:rank_photos()` — merge + weight + rank (set mode)
 - `core/rank.py:_rank_burst()` — apply BURST_WEIGHTS, sort by final_score (burst mode)
+- `core/rank.py:flag_softer()` — burst: mark frames with blur_raw below `BURST_SOFTER_RATIO` (0.2) x №1's; nothing is dropped
 - `core/profiles.py:PROFILES` — single source of truth for all profile weight dicts
 - `core/profiles.py:BURST_WEIGHTS` — burst mode axis weights (face_sharpness, sharpness, face_exposure, exposure)
 - `core/profiles.py:validate_weights()` — called on load, raises if weights don't sum to 1.0
@@ -611,6 +630,7 @@ cd ~/projects/photorank && git checkout pre-pr-<number> && (cd frontend && npm c
 - `api/main.py:_left_out()` — every upload not in `ranked`, with its reason; each photo comes back exactly once
 - `frontend/src/lib/leftOut.js:leftOutPhotos()` — what the results screen names as left out (phone, server, safety net)
 - `frontend/src/lib/freshness.js:newerBuildDeployed()` — does the deployed shell load a different bundle than this page?
+- `frontend/src/components/PhotoViewer.jsx` — full-screen viewer: originals at full resolution, pinch/swipe, keyboard
 - `frontend/src/lib/notes.js:fallbackNotes()` — one note per photo without a Gemini note, each true for its photo; `noteClaims()` is the same as data (tested)
 - `frontend/src/compress.js:compressImage()` — ~1.5 MP JPEG re-encode (`createImageBitmap`, else an `<img>`); on failure the JPEG with its metadata stripped; else `unprepared` (not uploaded)
 - `frontend/src/lib/stripJpeg.js:stripJpegMetadata()` — keeps only the segments a decoder needs (allowlist) and nothing after EOI; null if it can't

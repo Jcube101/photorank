@@ -93,7 +93,14 @@ export default function LoadingScreen({ files, profile, onDone, onError, onBack 
         handedOff = true;
         // Let the bar visibly reach 100% before swapping screens.
         setTimeout(() => {
-          if (!cancelled) onDone(result, previewMap, { unprepared, uploaded: compressed.map((f) => f.name) });
+          // The original files, by upload name, for the full-screen viewer
+          // (full resolution). They stay in memory and never leave the phone.
+          const originals = new Map(names.map((name, i) => [name, files[i]]));
+          if (!cancelled) {
+            onDone(result, previewMap, {
+              unprepared, uploaded: compressed.map((f) => f.name), originals,
+            });
+          }
         }, 360);
       } catch (err) {
         if (cancelled || err?.name === "AbortError") return;

@@ -59,6 +59,30 @@ _BURST_MODE_MAX_PHOTOS = 6
 # Burst mode helpers
 # ---------------------------------------------------------------------------
 
+# Burst mode ranks every readable photo: there is no fixed blur gate (a fixed
+# blur_raw < 100 cut dropped selfie frames at 59, 69 and 99 that the owner
+# judged fine; Laplacian variance depends on the camera and scene, not just on
+# focus). Instead a frame is flagged "noticeably softer than №1" when its
+# blur_raw is below BURST_SOFTER_RATIO x №1's. Chosen from data, 2026-11-27
+# (LEARNINGS): in 37 real near-identical sets (166 frames, Sony and Samsung)
+# the lowest ratio to the set's sharpest was 0.36, and that frame is not
+# visibly softer; the owner's own answer-key picks go down to 0.50. A real
+# frame blurred just visibly (Gaussian sigma 0.75 px at 1.5 MP) drops to
+# 0.09-0.16; barely visible (sigma 0.5) to 0.37-0.45. 0.2 sits between the two
+# (the log midpoint of 0.36 and 0.11), about a 0.65 px blur. Measured against
+# №1, so the label is true by construction, and the frame is then also far
+# below the set's best, which is at least as sharp as №1.
+BURST_SOFTER_RATIO = 0.2
+
+
+def flag_softer(ranked: list[dict]) -> list[dict]:
+    """Set `softer_than_top` on each ranked burst photo (№1 never is)."""
+    top = ranked[0]["blur_raw"] if ranked else 0.0
+    for i, photo in enumerate(ranked):
+        photo["softer_than_top"] = i > 0 and photo["blur_raw"] < BURST_SOFTER_RATIO * top
+    return ranked
+
+
 def _rank_burst(burst_scores: list[dict]) -> list[dict]:
     """Apply BURST_WEIGHTS to burst scores. Returns list sorted by final_score desc."""
     axes = list(BURST_WEIGHTS.keys())
@@ -91,21 +115,18 @@ def _rank_burst(burst_scores: list[dict]) -> list[dict]:
     return ranked
 
 
-def _print_burst_summary(ranked: list[dict], blurry_ids: list[str]) -> None:
+def _print_burst_summary(ranked: list[dict]) -> None:
     print("\n=== PhotoRank Results (burst mode) ===\n", file=sys.stderr)
     for photo in ranked:
         face_tag = "" if photo["face_detected"] else " [no face]"
+        soft_tag = " [noticeably softer than #1]" if photo.get("softer_than_top") else ""
         print(
             f"  #{photo['final_rank']:>2}  {photo['photo_id']:<40}"
             f"  score={photo['final_score']:.3f}"
             f"  face_sharp={photo['face_sharpness']:.2f}"
-            f"  sharp={photo['sharpness']:.2f}{face_tag}",
+            f"  sharp={photo['sharpness']:.2f}{face_tag}{soft_tag}",
             file=sys.stderr,
         )
-    if blurry_ids:
-        print(f"\n  Skipped (blurry): {len(blurry_ids)} photo(s)", file=sys.stderr)
-        for name in blurry_ids:
-            print(f"    {name}", file=sys.stderr)
     print(file=sys.stderr)
 
 
@@ -224,7 +245,8 @@ def main() -> None:
         "--blur-threshold", "-b",
         type=float,
         default=100.0,
-        help="Laplacian variance threshold — images below this are skipped (default: 100)",
+        help="Set mode: Laplacian variance threshold, images below this are skipped "
+             "(default: 100). Burst mode ranks every photo.",
     )
     parser.add_argument(
         "--no-blur-filter",
@@ -300,43 +322,17 @@ def main() -> None:
                 print("[rank] no images could be scored.", file=sys.stderr)
                 sys.exit(1)
 
-            blur_gate_bypassed = False
-            blurry_ids: list[str] = []
-            if args.no_blur_filter:
-                sharp_scores = all_scores
-            else:
-                sharp_scores  = [s for s in all_scores if s["blur_raw"] >= args.blur_threshold]
-                blurry_scores = [s for s in all_scores if s["blur_raw"] <  args.blur_threshold]
-                blurry_ids    = [s["photo_id"] for s in blurry_scores]
-                print(
-                    f"[rank] {len(sharp_scores)} sharp, {len(blurry_scores)} blurry "
-                    f"(threshold={args.blur_threshold})",
-                    file=sys.stderr,
-                )
-                # The blur gate thins a set; it must not refuse to rank. If nothing
-                # clears the threshold, rank everything and pick the least-blurry.
-                if not sharp_scores:
-                    print(
-                        f"[rank] all {len(all_scores)} image(s) below blur threshold "
-                        f"({args.blur_threshold}); ranking all anyway (gate bypassed).",
-                        file=sys.stderr,
-                    )
-                    sharp_scores       = all_scores
-                    blurry_ids         = []
-                    blur_gate_bypassed = True
-
-            ranked = _rank_burst(sharp_scores)
-            _print_burst_summary(ranked, blurry_ids)
+            # Burst ranks every readable photo; no blur gate (BURST_SOFTER_RATIO).
+            ranked = flag_softer(_rank_burst(all_scores))
+            _print_burst_summary(ranked)
 
             output_data = {
-                "mode":               "burst",
-                "burst_weights":      BURST_WEIGHTS,
-                "blur_threshold":     None if args.no_blur_filter else args.blur_threshold,
-                "blur_gate_bypassed": blur_gate_bypassed,
-                "total_photos":       len(photos),
-                "scored_photos":      len(sharp_scores),
-                "skipped_blurry":     len(blurry_ids),
-                "ranked":             ranked,
+                "mode":          "burst",
+                "burst_weights": BURST_WEIGHTS,
+                "softer_ratio":  BURST_SOFTER_RATIO,
+                "total_photos":  len(photos),
+                "scored_photos": len(all_scores),
+                "ranked":        ranked,
             }
 
         # ------------------------------------------------------------------

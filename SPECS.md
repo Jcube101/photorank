@@ -117,15 +117,27 @@ Reference calibration:
 | ~2000+ | ~12000+ | ~9–10 (very sharp) |
 
 `blur_raw` (raw Laplacian variance, unscaled) is also returned and used as the
-blur gate. Images where `blur_raw < blur_threshold` are excluded before Gemini
-is called. Default threshold: **100**.
+**set-mode** blur gate. Images where `blur_raw < blur_threshold` are excluded
+before Gemini is called. Default threshold: **100**.
+
+**Burst mode has no blur gate.** Every readable photo is ranked. A frame is
+flagged `softer_than_top: true` ("Noticeably softer than №1") when its
+`blur_raw < 0.2 × №1's blur_raw` (`core/rank.py:BURST_SOFTER_RATIO`). The ratio
+comes from data (LEARNINGS 2026-11-27):
+- **Natural variation:** in 37 real near-identical sets (166 frames), the
+  lowest ratio to the sharpest was 0.36, on a frame that isn't visibly softer.
+- **Your own picks:** the owner's answer-key picks go down to 0.50.
+- **Visible blur:** a real frame blurred just visibly (Gaussian σ 0.75 px at
+  1.5 MP) falls to 0.09–0.16.
+
+The threshold is measured against №1, so the label is always true.
 
 **Blur-gate fallback:** the gate _thins_ a set — it must never refuse to rank.
 If **every** photo is below the threshold (common for a small, uniformly-soft
 burst), the gate is bypassed: all photos are scored and ranked anyway, and the
 response carries `blur_gate_bypassed: true`. A request is only rejected when no
-image could be scored at all (corrupt/unreadable). This applies to both the API
-and the CLI, in both burst and set mode.
+image could be scored at all (corrupt/unreadable). This applies to the API and
+the CLI, in set mode (burst mode has no gate).
 
 ### 3.2 Exposure
 
@@ -234,16 +246,18 @@ to the same function used for full-image exposure).
 
 ```json
 {
-  "mode":               "burst",
-  "burst_weights":      {"face_sharpness": 0.50, "sharpness": 0.20, "face_exposure": 0.20, "exposure": 0.10},
-  "blur_threshold":     100.0,
-  "blur_gate_bypassed": false,
-  "total_photos":       4,
-  "scored_photos":      4,
-  "skipped_blurry":     0,
-  "ranked":             [/* per-photo objects sorted by final_rank */]
+  "mode":          "burst",
+  "burst_weights": {"face_sharpness": 0.50, "sharpness": 0.20, "face_exposure": 0.20, "exposure": 0.10},
+  "softer_ratio":  0.2,
+  "total_photos":  4,
+  "scored_photos": 4,
+  "ranked":        [/* per-photo objects sorted by final_rank, each with softer_than_top */],
+  "left_out":      []
 }
 ```
+
+Burst output has no blur-gate fields: every readable photo is ranked. Each
+ranked photo carries `softer_than_top` (§3.1); №1's is always `false`.
 
 ---
 
@@ -691,8 +705,8 @@ one decimal the breakdown shows, so every note is true for its photo:
 
 - №1: the axis it leads by the most (weight × margin) — "Sharpest face in this
   set." If it only ties, "Joint …"; if it leads none, "Best combined score in
-  this set." With photos left out by the blur gate, "in this set" becomes "of
-  the N ranked".
+  this set." With photos left out (unreadable or unscorable; set mode's blur
+  gate too), "in this set" becomes "of the N ranked".
 - Every other photo, against №1: the axis where it loses the most weighted
   points, and the one where it gains the most, if any — "Sharper overall than
   №1, but softer face." / "Softer face than №1." / "Level with №1 on every
@@ -713,6 +727,31 @@ runners-up, each with its photo and reason ("Too blurry to rank: blur check
 what is on screen. The app stores the names it uploaded with the result, so
 this survives a restore. Burst results say "Burst" / "Burst mode", never a
 profile (burst mode uses none).
+
+### 9.4b Burst results and the full-screen viewer
+
+**Burst line.** A burst result shows one line where the profile switcher would
+be: "Burst: near-identical shots ranked on sharpness and exposure only." The
+switcher stays hidden. A runner-up with `softer_than_top` shows "Noticeably
+softer than №1" under its note.
+
+**Viewer** (`src/components/PhotoViewer.jsx`). Tapping №1's photo, or any
+runner-up or left-out thumbnail, opens it full screen:
+- **Gestures:** pinch to zoom (up to 5×), drag to pan when zoomed, double-tap
+  to zoom. Swipe left and right through every photo in rank order (left-out
+  last). Swipe down or × closes.
+- **Overlay:** "№2 · 7.8/10" (or "Left out"), the note or reason, the photo
+  name, and "2 / 5". A softer frame also shows its flag.
+- **Keyboard and focus:** Escape closes; ← and → navigate; ‹ and › buttons do
+  the same. It is a modal dialog: focus moves to × and returns to the opener
+  on close.
+- **Image source:** each slide shows the **original** file when the app still
+  holds it (full resolution, for judging focus), through an object URL made
+  for that slide and revoked when it changes. Only one is decoded at a time.
+  It falls back to the compressed preview if the original can't be displayed.
+  The originals live in memory only and never leave the phone.
+- **Restored results:** a result restored from sessionStorage has no photos.
+  Nothing on it opens the viewer.
 
 ### 9.5 Error handling
 

@@ -44,10 +44,10 @@ def _accounted_once(out: dict, uploaded: list[str]) -> None:
     assert sorted(ranked + left) == sorted(uploaded)  # each exactly once
 
 
-@pytest.mark.parametrize("mode", ["burst", "set"])
-def test_blurry_photos_are_named_with_their_blur_score(monkeypatch, mode):
+def test_set_mode_names_blurry_photos_with_their_blur_score(monkeypatch):
+    # Set mode keeps its fixed blur gate; burst mode has none (tests/test_burst_softer.py).
     photos = [jpeg(seed=i, blur=b) for i, b in enumerate(BLUR)]
-    out = _rank(monkeypatch, photos, mode)
+    out = _rank(monkeypatch, photos, "set")
     _accounted_once(out, NAMES)
     assert sorted(p["photo_id"] for p in out["ranked"]) == sorted(NAMES[:2])
     assert [e["photo_id"] for e in out["left_out"]] == NAMES[2:]  # in upload order
@@ -57,9 +57,8 @@ def test_blurry_photos_are_named_with_their_blur_score(monkeypatch, mode):
     assert out["skipped_blurry"] == 3
 
 
-@pytest.mark.parametrize("mode", ["burst", "set"])
-def test_nothing_is_left_out_when_the_blur_gate_is_bypassed(monkeypatch, mode):
-    out = _rank(monkeypatch, [jpeg(seed=i, blur=2.5) for i in range(5)], mode)
+def test_nothing_is_left_out_when_the_set_mode_blur_gate_is_bypassed(monkeypatch):
+    out = _rank(monkeypatch, [jpeg(seed=i, blur=2.5) for i in range(5)], "set")
     assert out["blur_gate_bypassed"]
     assert out["left_out"] == []
     _accounted_once(out, NAMES)

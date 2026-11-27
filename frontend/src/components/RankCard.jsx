@@ -6,7 +6,9 @@ import AxisBar from "./AxisBar.jsx";
 import Photo from "./Photo.jsx";
 import { buildBreakdown } from "../lib/breakdown.js";
 
-export default function RankCard({ photo, rank, previewUrl, fallbackNote, open, onToggle }) {
+export default function RankCard({
+  photo, rank, previewUrl, fallbackNote, flag, onOpen, open, onToggle,
+}) {
   const { axes, total } = useMemo(
     () => buildBreakdown(photo.score_breakdown),
     [photo.score_breakdown],
@@ -23,6 +25,7 @@ export default function RankCard({ photo, rank, previewUrl, fallbackNote, open, 
         </div>
         <div className="rank-text">
           <div className="rank-blurb">{blurb}</div>
+          {flag && <div className="rank-flag">{flag}</div>}
           <div className="rank-sub">{photo.photo_id}</div>
         </div>
         <div className="rank-right">
@@ -35,6 +38,13 @@ export default function RankCard({ photo, rank, previewUrl, fallbackNote, open, 
           </div>
         </div>
       </button>
+      {onOpen && (
+        <button
+          className="thumb-open"
+          onClick={onOpen}
+          aria-label={`View ${photo.photo_id} full screen`}
+        />
+      )}
 
       {open && (
         <div className="breakdown">
