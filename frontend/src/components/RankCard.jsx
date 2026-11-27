@@ -3,14 +3,15 @@
 
 import { useMemo } from "react";
 import AxisBar from "./AxisBar.jsx";
-import { buildBreakdown, fallbackNote } from "../lib/breakdown.js";
+import Photo from "./Photo.jsx";
+import { buildBreakdown } from "../lib/breakdown.js";
 
-export default function RankCard({ photo, rank, previewUrl, open, onToggle }) {
+export default function RankCard({ photo, rank, previewUrl, fallbackNote, open, onToggle }) {
   const { axes, total } = useMemo(
     () => buildBreakdown(photo.score_breakdown),
     [photo.score_breakdown],
   );
-  const blurb = photo.notes || fallbackNote(axes);
+  const blurb = photo.notes || fallbackNote;
   const score = Number(photo.final_score ?? 0);
 
   return (
@@ -18,11 +19,7 @@ export default function RankCard({ photo, rank, previewUrl, open, onToggle }) {
       <button className="rank-row" onClick={onToggle} aria-expanded={open}>
         <div className="rank-pos">{String(rank).padStart(2, "0")}</div>
         <div className="rank-thumb">
-          {previewUrl ? (
-            <img src={previewUrl} alt="" />
-          ) : (
-            <div className="placeholder-fill" />
-          )}
+          <Photo src={previewUrl} />
         </div>
         <div className="rank-text">
           <div className="rank-blurb">{blurb}</div>

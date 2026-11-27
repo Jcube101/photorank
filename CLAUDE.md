@@ -213,11 +213,12 @@ photorank/
     │   ├── compress.js           ← client-side downscale ~1.5 MP, HEIC→JPEG
     │   ├── usePwaInstall.js       ← Add-to-Home-Screen prompt (after 1st success)
     │   ├── lib/breakdown.js      ← normalizes API score_breakdown → bar rows (hides 0-weight axes)
+    │   ├── lib/notes.js          ← the note on a photo without a Gemini note (compares it with №1)
     │   ├── lib/rerank.js         ← client-side profile re-rank (mirrors rank_photos)
     │   ├── lib/uploadNames.js    ← unique upload names (the server echoes them as photo_id)
     │   ├── lib/captureTime.js    ← EXIF DateTimeOriginal from the original file (burst detection)
     │   ├── screens/              ← UploadScreen, LoadingScreen, ResultsScreen
-    │   └── components/           ← HeroCard, RankCard, AxisBar, MessageScreen
+    │   └── components/           ← HeroCard, RankCard, Photo, AxisBar, MessageScreen
     └── _design/                  ← archived Claude Design reference (NOT production)
 ```
 
@@ -434,8 +435,19 @@ near-black `--ink`, olive `--accent`).
   that name unchanged as `photo_id` (`api/main.py:_photo_ids`, SPECS §6.1), which
   maps each result back to its preview. Never rewrite the name on either side:
   the server once lower-cased extensions and added `.jpg`, and every Android
-  result showed the placeholder (LEARNINGS 2026-11-27). On decode failure: send
-  the original, fall back to a gradient placeholder.
+  result showed the placeholder (LEARNINGS 2026-11-27). If `createImageBitmap`
+  rejects a photo (it has on Android Chrome, for camera JPEGs), it decodes
+  through an `<img>` instead. If re-encoding still fails, it uploads the
+  original and previews the original; the cards (`components/Photo.jsx`) show
+  the gradient placeholder only when the image won't load (e.g. HEIC outside
+  Safari).
+- **Notes without Gemini** (every burst-mode photo): `src/lib/notes.js`
+  compares each photo with the rest of the result, at the breakdown's one
+  decimal. Only №1 is called the best at anything "in this set"; every other
+  photo is described against №1 ("Softer face than №1."). Never build a note
+  from one photo's own scores: the old one named each photo's largest
+  contribution, so every card said "Strongest on face sharpness" (LEARNINGS
+  2026-11-27).
 - **Errors are mapped to friendly copy** in `src/api.js` (422/500/502 →
   user-facing messages); raw server detail is never shown.
 - **Privacy on the client:** previews are object URLs, revoked on reset. No
@@ -480,7 +492,10 @@ These cannot be relaxed for any reason:
 6. **Only the capture time leaves the phone from EXIF.** The PWA sends each
    photo's `DateTimeOriginal` (`capture_times`) for burst detection and no other
    EXIF tag, never GPS; the uploaded pixels carry no EXIF (canvas re-encode).
-   The server never logs, returns or stores capture times.
+   The server never logs, returns or stores capture times. **Open gap:** when
+   compression fails, the original is uploaded as-is, EXIF and GPS included
+   (the server strips it at ingest and deletes the file); see LEARNINGS
+   2026-11-27.
 
 ---
 
@@ -558,6 +573,8 @@ cd ~/projects/photorank && git checkout pre-pr-<number> && (cd frontend && npm c
 - `api/main.py:_auto_detect_mode()` — 'burst' if ≤6 photos all have capture times within 10 s, else 'set'; each time comes from the `capture_times` field, else the file's EXIF (Exif IFD, via `core/group.py:read_capture_time`)
 - `api/main.py:_sent_capture_times()` — parses the PWA's `capture_times` field; anything malformed is ignored (→ set mode)
 - `frontend/src/lib/captureTime.js:readCaptureTime()` — DateTimeOriginal from the first 128 KB of an original JPEG; reads no other tag
+- `frontend/src/lib/notes.js:fallbackNotes()` — one note per photo without a Gemini note, each true for its photo; `noteClaims()` is the same as data (tested)
+- `frontend/src/compress.js:compressImage()` — ~1.5 MP JPEG re-encode; `createImageBitmap`, else an `<img>`; on failure uploads and previews the original
 - `api/main.py:_run_burst()` — burst scoring sub-routine (called after EXIF stripping by ingest)
 - `api/main.py:_run_set()` — set mode scoring sub-routine (deterministic → Gemini → merge → rank)
 

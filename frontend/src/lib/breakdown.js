@@ -52,14 +52,6 @@ export function buildBreakdown(scoreBreakdown) {
   return { axes, total };
 }
 
-// Burst mode has no Gemini `notes`. Synthesize a short, honest blurb from the
-// axis that contributed most, so the card/hero never shows an empty quote.
-export function fallbackNote(axes) {
-  if (!axes || axes.length === 0) return "Ranked on technical quality.";
-  const top = [...axes].sort((a, b) => b.contribution - a.contribution)[0];
-  return `Strongest on ${top.label.toLowerCase()} in this set.`;
-}
-
 function num(v, fallback) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }

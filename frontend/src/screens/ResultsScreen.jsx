@@ -12,6 +12,8 @@ import HeroCard from "../components/HeroCard.jsx";
 import RankCard from "../components/RankCard.jsx";
 import { PROFILES, PROFILE_WEIGHTS, profileName } from "../config.js";
 import { rerankByProfile } from "../lib/rerank.js";
+import { buildBreakdown } from "../lib/breakdown.js";
+import { fallbackNotes } from "../lib/notes.js";
 
 export default function ResultsScreen({ result, previews, onRestart }) {
   const canSwitch = result.mode === "set";
@@ -29,6 +31,14 @@ export default function ResultsScreen({ result, previews, onRestart }) {
 
   const winner = ranked[0];
   const rest = ranked.slice(1);
+
+  // The note for a photo without a Gemini note (all of burst mode). Each one
+  // compares that photo with the others, so it depends on the whole ranking
+  // and changes when the profile switcher reorders it (lib/notes.js).
+  const notes = useMemo(() => {
+    const subset = (result.scored_photos ?? ranked.length) < (result.total_photos ?? ranked.length);
+    return fallbackNotes(ranked.map((p) => buildBreakdown(p.score_breakdown).axes), { subset });
+  }, [ranked, result.scored_photos, result.total_photos]);
 
   const profLabel = profileName(canSwitch ? viewProfile : result.profile);
   const totalPhotos = result.total_photos ?? ranked.length;
@@ -119,7 +129,12 @@ export default function ResultsScreen({ result, previews, onRestart }) {
             </div>
           )}
 
-          <HeroCard photo={winner} previewUrl={winnerUrl} profileLabel={profLabel} />
+          <HeroCard
+            photo={winner}
+            previewUrl={winnerUrl}
+            profileLabel={profLabel}
+            fallbackNote={notes[0]}
+          />
 
           {rest.length > 0 && (
             <>
@@ -134,6 +149,7 @@ export default function ResultsScreen({ result, previews, onRestart }) {
                     photo={p}
                     rank={i + 2}
                     previewUrl={previewFor(p.photo_id)}
+                    fallbackNote={notes[i + 1]}
                     open={openId === p.photo_id}
                     onToggle={() =>
                       setOpenId(openId === p.photo_id ? null : p.photo_id)

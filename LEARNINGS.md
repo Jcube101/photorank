@@ -259,4 +259,16 @@ are equal.
 
 ---
 
+**Discovery:** Burst results on the owner's Android phone showed the gradient placeholder on every card. The preview lookup was fine: the phone never made previews. Each request's ingest time in the server log scales with pixel count, so it shows what was uploaded without logging any size: the burst run took 0.18 s a photo, like 12 MP originals on the Pi (0.21 s) and six times a 1.5 MP compressed upload (0.03 s). So `compressImage` failed for every photo and uploaded the original with no preview. The day's two set-mode runs uploaded originals too but failed on Gemini (a revoked API key) before showing results, so the bug looked burst-only. "Save winner" looked enabled, but a disabled `.btn-primary` has no style of its own, so that was no evidence of a preview. Earlier runs from the same phone were compressed. Headless Chromium decodes the same real photos, so the failure is not reproduced, and why the phone's `createImageBitmap` rejects them is not known.
+**Impact:** `compress.js` decodes through an `<img>` when `createImageBitmap` rejects, and if re-encoding still fails it previews the original; the cards (`components/Photo.jsx`) show the placeholder only when the image won't load. `tests/test_results_photos_e2e.py` makes Chromium's decoders reject the photos, as the phone's did, in a real 5-photo burst. Open: an uploaded original carries its full EXIF, GPS included, to the Pi. Ingest strips it before Gemini and the file is deleted after scoring, but the phone should not send it (CLAUDE.md privacy rule 6).
+**Date:** 2026-11-27
+
+---
+
+**Discovery:** Every card in a burst result said "Strongest on face sharpness in this set.", 3rd and 4th place included. The note named the photo's own largest contribution, without comparing it with the other photos. Face sharpness carries 50% of the burst weight, so it was the largest on nearly every card.
+**Impact:** Notes compare across the result (`src/lib/notes.js`, SPECS §9.4): only №1 gets a superlative, and every other photo is described against №1, at the one decimal the breakdown shows. `tests/test_notes.py` checks each claim against the scores on 300 random bursts; the browser test checks a real burst.
+**Date:** 2026-11-27
+
+---
+
 *Add new entries above this line as discoveries are made.*

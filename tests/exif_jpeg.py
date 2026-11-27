@@ -64,12 +64,17 @@ def _segment(marker: int, body: bytes) -> bytes:
 def jpeg(width: int = 320, seed: int = 0, dto: str | None = None, *, byteorder: str = "<",
          gps: bool = True, xmp_first: bool = False, pad_kb: int = 0,
          dto_in_ifd0: bool = False, exif: bool = True,
-         gps_pointer: int | None = None) -> bytes:
-    """A noise JPEG; with `exif`, an EXIF APP1 right after SOI (after any padding/XMP)."""
+         gps_pointer: int | None = None, blur: float = 0) -> bytes:
+    """
+    A noise JPEG; with `exif`, an EXIF APP1 right after SOI (after any padding/XMP).
+    `blur` (a Gaussian sigma) softens it, so photos in a set score differently.
+    """
     import cv2
     import numpy as np
 
     noise = np.random.default_rng(seed).integers(0, 256, (240, width, 3), dtype=np.uint8)
+    if blur:
+        noise = cv2.GaussianBlur(noise, (0, 0), blur)
     ok, buf = cv2.imencode(".jpg", noise)
     assert ok
     body = buf.tobytes()[2:]  # drop SOI

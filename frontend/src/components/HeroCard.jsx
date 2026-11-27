@@ -4,9 +4,10 @@
 
 import { useMemo, useState } from "react";
 import AxisBar from "./AxisBar.jsx";
-import { buildBreakdown, fallbackNote } from "../lib/breakdown.js";
+import Photo from "./Photo.jsx";
+import { buildBreakdown } from "../lib/breakdown.js";
 
-export default function HeroCard({ photo, previewUrl, profileLabel }) {
+export default function HeroCard({ photo, previewUrl, profileLabel, fallbackNote }) {
   const [open, setOpen] = useState(false);
 
   const { axes, total } = useMemo(
@@ -14,21 +15,17 @@ export default function HeroCard({ photo, previewUrl, profileLabel }) {
     [photo.score_breakdown],
   );
 
-  const note = useMemo(() => {
-    if (photo.notes) return { text: photo.notes, quoted: true };
-    return { text: fallbackNote(axes), quoted: false };
-  }, [photo.notes, axes]);
+  // Gemini's note in quotes; otherwise the comparison note from lib/notes.js.
+  const note = photo.notes
+    ? { text: photo.notes, quoted: true }
+    : { text: fallbackNote, quoted: false };
 
   const score = Number(photo.final_score ?? 0);
 
   return (
     <div className={"hero-card" + (open ? " open" : "")}>
       <div className="hero-photo">
-        {previewUrl ? (
-          <img className="hero-img" src={previewUrl} alt="Top-ranked photo" />
-        ) : (
-          <div className="placeholder-fill" />
-        )}
+        <Photo className="hero-img" src={previewUrl} alt="Top-ranked photo" />
         <div className="hero-rank-badge">
           <span className="rank-num">№1</span>
           <span>Best shot</span>
