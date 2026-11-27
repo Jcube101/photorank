@@ -1,9 +1,13 @@
 // Headless-Chromium driver for tests/test_results_photos_e2e.py.
 //
-// Reads {url, files: [{path, name}]} as JSON on stdin, uploads the files under
-// those names on an emulated Android phone, and prints JSON describing the
-// results screen twice: fresh, then after a reload (restored from
-// sessionStorage). Prints {"skip": reason} if Chromium is not installed.
+// Reads {url, files: [{path, name}], break?: [...]} as JSON on stdin, uploads
+// the files under those names on an emulated Android phone, and prints JSON
+// describing the results screen twice: fresh, then after a reload (restored
+// from sessionStorage). Prints {"skip": reason} if Chromium is not installed.
+//
+// `break` makes the page's image decoders fail the way they have on a real
+// Android phone: "createImageBitmap" rejects every photo, and "imgDecode"
+// makes HTMLImageElement.decode() reject too (an <img> still displays).
 
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -21,25 +25,50 @@ try {
   process.exit(0);
 }
 
-const page = await (await browser.newContext({ ...devices["Pixel 7"] })).newPage();
+const context = await browser.newContext({ ...devices["Pixel 7"] });
+const broken = new Set(spec.break ?? []);
+if (broken.has("createImageBitmap")) {
+  await context.addInitScript(() => {
+    window.createImageBitmap = () =>
+      Promise.reject(new DOMException("The source image could not be decoded.", "InvalidStateError"));
+  });
+}
+if (broken.has("imgDecode")) {
+  await context.addInitScript(() => {
+    HTMLImageElement.prototype.decode = () =>
+      Promise.reject(new DOMException("The source image cannot be decoded.", "EncodingError"));
+  });
+}
+const page = await context.newPage();
 const errors = [];
 page.on("pageerror", (err) => errors.push(err.message));
 
-// The mode the server chose (burst or set), from the /rank response.
+// The /rank response, and the mode the server chose (burst or set).
 let mode = null;
+let response = null;
 page.on("response", async (res) => {
   if (res.request().method() === "POST" && new URL(res.url()).pathname === "/rank") {
-    mode = await res.json().then((j) => j.mode, () => `status ${res.status()}`);
+    response = await res.json().catch(() => null);
+    mode = response?.mode ?? `status ${res.status()}`;
   }
 });
 
-// Each result card: its photo_id and what it shows (the photo with its pixel
-// width, or the gradient placeholder).
+// Each result card: its photo_id, what it shows (the photo with its pixel
+// width, the gradient placeholder, or a broken image) and its note.
 async function readResults() {
   await page.waitForSelector(".hero-card", { timeout: 60_000 });
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll(".hero-card img, .rank-card img")].every((i) => i.complete),
-  );
+  // Every image loads, or fails and is swapped for the placeholder. A broken
+  // image that stays on screen times out here and is reported as "broken".
+  await page
+    .waitForFunction(
+      () =>
+        [...document.querySelectorAll(".hero-card img, .rank-card img")].every(
+          (i) => i.complete && i.naturalWidth > 0,
+        ),
+      null,
+      { timeout: 10_000 },
+    )
+    .catch(() => {});
   return page.evaluate(() => {
     const shows = (img) => (!img ? "placeholder" : img.naturalWidth > 0 ? "photo" : "broken");
     const hero = document.querySelector(".hero-card");
@@ -48,6 +77,7 @@ async function readResults() {
       id: hero.querySelector(".placeholder-tag").textContent,
       shows: shows(heroImg),
       width: heroImg?.naturalWidth ?? null,
+      note: hero.querySelector(".hero-note").firstChild.textContent,
     }];
     for (const card of document.querySelectorAll(".rank-card")) {
       const img = card.querySelector(".rank-thumb img");
@@ -55,6 +85,7 @@ async function readResults() {
         id: card.querySelector(".rank-sub").textContent,
         shows: shows(img),
         width: img?.naturalWidth ?? null,
+        note: card.querySelector(".rank-blurb").textContent,
       });
     }
     const save = document.querySelector(".results-footer .btn-primary");
@@ -87,5 +118,5 @@ if (await page.locator(".rerank").count()) {
 await page.reload();
 const restored = await readResults();
 
-console.log(JSON.stringify({ mode, fresh, switcher, restored, errors }));
+console.log(JSON.stringify({ mode, response, fresh, switcher, restored, errors }));
 await browser.close();

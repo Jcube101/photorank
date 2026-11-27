@@ -623,8 +623,11 @@ the same `_N` rule as §6.1 (`src/lib/uploadNames.js`), so the server never
 renames it and the response `photo_id` maps back to the local preview. The same
 compressed blob is both uploaded and shown on screen, so the user sees exactly
 what was scored. HEIC is converted in the process (it is otherwise unrenderable
-in most browsers). If decode fails, the original file is uploaded untouched and
-the UI falls back to a gradient placeholder for that photo.
+in most browsers). Decoding uses `createImageBitmap`, and an `<img>` if that
+rejects (Android Chrome has rejected camera JPEGs it displays fine). If the
+photo still can't be re-encoded, the original is uploaded untouched and used as
+the preview; a card whose preview won't load (e.g. HEIC outside Safari) shows
+the gradient placeholder.
 
 ### 9.4 Score breakdown rendering (the transparency contract)
 
@@ -645,8 +648,20 @@ Per row:
 - Gemini-sourced axes are tinted with the accent colour; zero-weight axes are
   shown muted (scored but not counted for this profile).
 
-Burst mode has no `notes`; a short fallback blurb is synthesised from the
-highest-contribution axis.
+Burst mode has no `notes`. Each photo without one gets a note that compares
+it with the others in the result (`src/lib/notes.js`), using raw values at the
+one decimal the breakdown shows, so every note is true for its photo:
+
+- №1: the axis it leads by the most (weight × margin) — "Sharpest face in this
+  set." If it only ties, "Joint …"; if it leads none, "Best combined score in
+  this set." With photos left out by the blur gate, "in this set" becomes "of
+  the N ranked".
+- Every other photo, against №1: the axis where it loses the most weighted
+  points, and the one where it gains the most, if any — "Sharper overall than
+  №1, but softer face." / "Softer face than №1." / "Level with №1 on every
+  measure."
+
+Only №1 is ever called the best at anything.
 
 ### 9.5 Error handling
 

@@ -59,8 +59,13 @@ public/
   the explicit `raw × weight = contribution` math.
 - **Real previews:** uploaded photos are compressed client-side and the same
   blob is both uploaded and shown as the hero/thumbnails, mapped back by
-  `photo_id`. If a browser can't decode the file (e.g. HEIC outside iOS Safari)
-  it falls back to the gradient placeholder and uploads the original.
+  `photo_id`. If `createImageBitmap` rejects a photo, it is decoded through an
+  `<img>`; if it still can't be re-encoded, the original is uploaded and shown.
+  A card whose image won't load (e.g. HEIC outside iOS Safari) shows the
+  gradient placeholder.
+- **Notes:** burst-mode photos have no AI note, so each gets one comparing it
+  with the others (`src/lib/notes.js`): only №1 is called the best at anything;
+  the rest are described against №1.
 - **Privacy:** preview object URLs are revoked on reset; nothing is persisted;
   the service worker never caches the scoring API.
 - **Offline:** the upload shell loads offline and shows a "connect to score"
