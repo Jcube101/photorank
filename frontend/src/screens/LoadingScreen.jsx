@@ -9,11 +9,12 @@
 // times we read here, before compression strips EXIF (lib/captureTime.js).
 
 import { useEffect, useRef, useState } from "react";
-import { profileName } from "../config.js";
+import { MIN_FILES, profileName } from "../config.js";
 import { compressImage } from "../compress.js";
 import { rankPhotos } from "../api.js";
 import { uploadNames } from "../lib/uploadNames.js";
 import { readCaptureTime } from "../lib/captureTime.js";
+import { tooFewMessage } from "../lib/unprepared.js";
 
 export default function LoadingScreen({ files, profile, onDone, onError, onBack }) {
   const count = files.length;
@@ -46,23 +47,33 @@ export default function LoadingScreen({ files, profile, onDone, onError, onBack 
         const previewMap = new Map();
         const names = uploadNames(files.map((f) => f.name));
         // upload name → "YYYY:MM:DD HH:MM:SS", for burst detection. Read from
-        // the original: compression drops EXIF. Nothing else from EXIF is sent.
+        // the original, before compression or stripping drops EXIF. Nothing
+        // else from EXIF is sent.
         const captureTimes = {};
+        // Upload names of photos that couldn't be prepared, so aren't sent.
+        const unprepared = [];
         for (const [i, f] of files.entries()) {
           const time = await readCaptureTime(f);
-          if (time) captureTimes[names[i]] = time;
           const r = await compressImage(f, names[i]);
           if (cancelled) {
             if (r.previewUrl) URL.revokeObjectURL(r.previewUrl);
             return;
           }
-          compressed.push(r.file);
-          if (r.previewUrl) {
+          if (r.file) {
+            compressed.push(r.file);
+            if (time) captureTimes[r.name] = time;
             previewMap.set(r.name, r.previewUrl);
             createdUrls.push(r.previewUrl);
+          } else {
+            unprepared.push(r.name);
           }
           setCompressedCount((c) => c + 1);
           setPreviews((p) => [...p, { name: r.name, url: r.previewUrl }]);
+        }
+        if (compressed.length < MIN_FILES) {
+          const err = new Error(tooFewMessage(unprepared, compressed.length, MIN_FILES));
+          err.kind = "unprepared";
+          throw err;
         }
 
         const result = await rankPhotos(compressed, profile, {
@@ -76,7 +87,7 @@ export default function LoadingScreen({ files, profile, onDone, onError, onBack 
         handedOff = true;
         // Let the bar visibly reach 100% before swapping screens.
         setTimeout(() => {
-          if (!cancelled) onDone(result, previewMap);
+          if (!cancelled) onDone(result, previewMap, unprepared);
         }, 360);
       } catch (err) {
         if (cancelled || err?.name === "AbortError") return;

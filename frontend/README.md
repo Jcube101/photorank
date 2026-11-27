@@ -60,9 +60,10 @@ public/
 - **Real previews:** uploaded photos are compressed client-side and the same
   blob is both uploaded and shown as the hero/thumbnails, mapped back by
   `photo_id`. If `createImageBitmap` rejects a photo, it is decoded through an
-  `<img>`; if it still can't be re-encoded, the original is uploaded and shown.
-  A card whose image won't load (e.g. HEIC outside iOS Safari) shows the
-  gradient placeholder.
+  `<img>`. If it still can't be re-encoded, a JPEG is uploaded with every
+  metadata segment stripped (no EXIF, GPS, XMP, IPTC or comments), and anything
+  else (e.g. HEIC outside iOS Safari) is not uploaded and is named on screen.
+  The original is never uploaded as-is.
 - **Notes:** burst-mode photos have no AI note, so each gets one comparing it
   with the others (`src/lib/notes.js`): only №1 is called the best at anything;
   the rest are described against №1.

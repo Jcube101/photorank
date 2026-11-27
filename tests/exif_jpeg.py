@@ -11,6 +11,12 @@ import struct
 ASCII, LONG, RATIONAL = 2, 4, 5
 GPS_LATITUDE = (12, 58, 30)  # degrees, minutes, seconds: must never leave the phone
 
+# Text planted in each other kind of metadata, so a test can search for it.
+XMP_TEXT = b"<x:xmpmeta><exif:GPSLatitude>12,58.5N</exif:GPSLatitude></x:xmpmeta>"
+IPTC_TEXT = b"Fort Kochi"
+COMMENT_TEXT = b"taken at home"
+TRAILER_TEXT = b"MotionPhoto_Data GPS 12.975"
+
 
 def _ascii(text: str) -> bytes:
     return text.encode("ascii") + b"\0"
@@ -64,10 +70,17 @@ def _segment(marker: int, body: bytes) -> bytes:
 def jpeg(width: int = 320, seed: int = 0, dto: str | None = None, *, byteorder: str = "<",
          gps: bool = True, xmp_first: bool = False, pad_kb: int = 0,
          dto_in_ifd0: bool = False, exif: bool = True,
-         gps_pointer: int | None = None, blur: float = 0) -> bytes:
+         gps_pointer: int | None = None, blur: float = 0,
+         all_metadata: bool = False, adobe: bool = False,
+         progressive: bool = False, restart: int = 0) -> bytes:
     """
     A noise JPEG; with `exif`, an EXIF APP1 right after SOI (after any padding/XMP).
     `blur` (a Gaussian sigma) softens it, so photos in a set score differently.
+    `all_metadata` adds every other kind a phone photo can carry, each holding
+    planted text: XMP (APP1), an ICC profile (APP2), IPTC (APP13), a comment
+    (COM), and a trailer after the end of the image, as Motion Photos have.
+    `adobe` adds a standard Adobe APP14; `progressive` and `restart` (a restart
+    interval in MCUs) change how the image data is coded.
     """
     import cv2
     import numpy as np
@@ -75,7 +88,12 @@ def jpeg(width: int = 320, seed: int = 0, dto: str | None = None, *, byteorder: 
     noise = np.random.default_rng(seed).integers(0, 256, (240, width, 3), dtype=np.uint8)
     if blur:
         noise = cv2.GaussianBlur(noise, (0, 0), blur)
-    ok, buf = cv2.imencode(".jpg", noise)
+    params = []
+    if progressive:
+        params += [cv2.IMWRITE_JPEG_PROGRESSIVE, 1]
+    if restart:
+        params += [cv2.IMWRITE_JPEG_RST_INTERVAL, restart]
+    ok, buf = cv2.imencode(".jpg", noise, params)
     assert ok
     body = buf.tobytes()[2:]  # drop SOI
     head = b""
@@ -85,4 +103,30 @@ def jpeg(width: int = 320, seed: int = 0, dto: str | None = None, *, byteorder: 
         head += _segment(0xE1, b"http://ns.adobe.com/xap/1.0/\0<x:xmpmeta/>")
     if exif:
         head += _segment(0xE1, b"Exif\0\0" + _tiff(dto, byteorder, gps, dto_in_ifd0, gps_pointer))
-    return b"\xff\xd8" + head + body
+    tail = b""
+    if all_metadata:
+        head += _segment(0xE1, b"http://ns.adobe.com/xap/1.0/\0" + XMP_TEXT)
+        head += _segment(0xE2, b"ICC_PROFILE\0\x01\x01" + b"\0" * 128)
+        head += _segment(0xED, b"Photoshop 3.0\08BIM\x04\x04\0\0\0\0\0\x0e\x1c\x02\x5a\0\x0a" + IPTC_TEXT)
+        head += _segment(0xFE, COMMENT_TEXT)
+        tail = TRAILER_TEXT
+    if adobe:
+        head += _segment(0xEE, b"Adobe\0\x64\0\0\0\0\x01")
+    return b"\xff\xd8" + head + body + tail
+
+
+def markers(data: bytes) -> list[int]:
+    """The marker of every segment before the image data ends (0xD9 = EOI)."""
+    found, i = [], 2
+    while i + 2 <= len(data):
+        assert data[i] == 0xFF, f"no marker at {i}"
+        m = data[i + 1]
+        found.append(m)
+        if m == 0xD9:
+            break
+        assert i + 4 <= len(data), f"truncated segment at {i}"
+        i += 2 + struct.unpack(">H", data[i + 2:i + 4])[0]
+        if m == 0xDA:  # entropy-coded data runs to the next marker that is not RSTn/stuffing
+            while i + 1 < len(data) and not (data[i] == 0xFF and data[i + 1] not in (0x00, *range(0xD0, 0xD8))):
+                i += 1
+    return found

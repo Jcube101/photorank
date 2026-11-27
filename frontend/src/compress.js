@@ -8,35 +8,52 @@
 //
 // Decoding can fail. Android Chrome has rejected createImageBitmap for camera
 // JPEGs that it displays fine (LEARNINGS 2026-11-27), so we then decode through
-// an <img> instead. If the photo still can't be re-encoded, we upload the
-// original untouched and preview the original: the results card shows it if
-// this browser can display it, and the gradient placeholder if not (e.g. HEIC
-// outside Safari).
+// an <img> instead. If the photo still can't be re-encoded, the original is
+// NEVER uploaded as-is: it carries EXIF (GPS included), XMP, IPTC and more.
+// A JPEG has every metadata segment cut out of its bytes, without decoding
+// (lib/stripJpeg.js), and that is uploaded and previewed. Anything else (e.g.
+// a HEIC this browser can't decode) is not uploaded at all; the loading and
+// results screens name it.
 
 import { COMPRESS_MAX_PIXELS, COMPRESS_QUALITY } from "./config.js";
+import { stripJpegMetadata } from "./lib/stripJpeg.js";
 
 /**
  * @param {File} file
  * @param {string} [name]  Name to upload under (default: the file's own name).
  *   The server returns it unchanged as the photo_id; see lib/uploadNames.js.
- * @returns {Promise<{ file: File, previewUrl: string, name: string, compressed: boolean }>}
- *   `file` is the blob to upload (compressed when possible, else the original),
- *   named `name`; `previewUrl` is an object URL for display: of the compressed
- *   blob, or of the original when compression failed (it may not be
- *   displayable; the cards fall back to a placeholder). `name` maps the result
- *   back to the preview by photo_id.
+ * @returns {Promise<{ status: "compressed"|"stripped"|"unprepared",
+ *                     file: File|null, previewUrl: string|null, name: string }>}
+ *   `file` is what to upload, named `name`: the compressed JPEG, or the
+ *   original JPEG with its metadata stripped; null when neither could be made
+ *   ("unprepared": don't upload it). `previewUrl` is an object URL of that same
+ *   file, so the screen shows what was scored. `name` maps the result back to
+ *   the preview by photo_id.
  */
 export async function compressImage(file, name = file.name) {
   try {
     const blob = await reencode(file);
-    // Upload under `name`: the server echoes it as the photo_id, which maps
-    // the result back to this preview on the results screen.
-    const out = new File([blob], name, { type: "image/jpeg" });
-    return { file: out, previewUrl: URL.createObjectURL(blob), name, compressed: true };
+    return prepared("compressed", blob, name);
   } catch {
-    // Upload the original so scoring still works, and preview it as it is.
-    const out = name === file.name ? file : new File([file], name, { type: file.type });
-    return { file: out, previewUrl: URL.createObjectURL(file), name, compressed: false };
+    const clean = await stripMetadata(file);
+    if (!clean) return { status: "unprepared", file: null, previewUrl: null, name };
+    return prepared("stripped", new Blob([clean], { type: "image/jpeg" }), name);
+  }
+}
+
+// Upload under `name`: the server echoes it as the photo_id, which maps the
+// result back to this preview on the results screen.
+function prepared(status, blob, name) {
+  const file = new File([blob], name, { type: "image/jpeg" });
+  return { status, file, previewUrl: URL.createObjectURL(blob), name };
+}
+
+/** The file's bytes with all metadata removed, or null if it isn't a clean-able JPEG. */
+async function stripMetadata(file) {
+  try {
+    return stripJpegMetadata(new Uint8Array(await file.arrayBuffer()));
+  } catch {
+    return null;
   }
 }
 

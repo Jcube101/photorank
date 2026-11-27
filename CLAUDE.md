@@ -214,6 +214,8 @@ photorank/
     │   ├── usePwaInstall.js       ← Add-to-Home-Screen prompt (after 1st success)
     │   ├── lib/breakdown.js      ← normalizes API score_breakdown → bar rows (hides 0-weight axes)
     │   ├── lib/notes.js          ← the note on a photo without a Gemini note (compares it with №1)
+    │   ├── lib/stripJpeg.js      ← cuts every metadata segment out of a JPEG (when compression fails)
+    │   ├── lib/unprepared.js     ← wording for photos that couldn't be prepared for upload
     │   ├── lib/rerank.js         ← client-side profile re-rank (mirrors rank_photos)
     │   ├── lib/uploadNames.js    ← unique upload names (the server echoes them as photo_id)
     │   ├── lib/captureTime.js    ← EXIF DateTimeOriginal from the original file (burst detection)
@@ -437,10 +439,13 @@ near-black `--ink`, olive `--accent`).
   the server once lower-cased extensions and added `.jpg`, and every Android
   result showed the placeholder (LEARNINGS 2026-11-27). If `createImageBitmap`
   rejects a photo (it has on Android Chrome, for camera JPEGs), it decodes
-  through an `<img>` instead. If re-encoding still fails, it uploads the
-  original and previews the original; the cards (`components/Photo.jsx`) show
-  the gradient placeholder only when the image won't load (e.g. HEIC outside
-  Safari).
+  through an `<img>` instead. If re-encoding still fails, a JPEG is uploaded
+  with its metadata stripped (`src/lib/stripJpeg.js`, no decoding; the
+  orientation tag goes too, so a rotated photo is scored and shown sideways),
+  and that file is the preview. Anything else is not uploaded: the results
+  screen names it ("Couldn't prepare … for upload"), or the error screen does
+  if fewer than 2 photos are left. The cards (`components/Photo.jsx`) show the
+  gradient placeholder when an image won't load.
 - **Notes without Gemini** (every burst-mode photo): `src/lib/notes.js`
   compares each photo with the rest of the result, at the breakdown's one
   decimal. Only №1 is called the best at anything "in this set"; every other
@@ -490,12 +495,15 @@ These cannot be relaxed for any reason:
 5. **Training consent is explicit.** If v2 ever collects data for training, it
    must be behind an explicit opt-in. Never assumed from usage.
 6. **Only the capture time leaves the phone from EXIF.** The PWA sends each
-   photo's `DateTimeOriginal` (`capture_times`) for burst detection and no other
-   EXIF tag, never GPS; the uploaded pixels carry no EXIF (canvas re-encode).
-   The server never logs, returns or stores capture times. **Open gap:** when
-   compression fails, the original is uploaded as-is, EXIF and GPS included
-   (the server strips it at ingest and deletes the file); see LEARNINGS
-   2026-11-27.
+   photo's `DateTimeOriginal` (`capture_times`, read from the original first)
+   for burst detection and no other EXIF tag, never GPS. **No upload carries
+   any metadata, and an original is never uploaded as-is.** Each photo goes up
+   as a canvas re-encode (which has none) or, if that fails, as the original
+   JPEG with every metadata segment cut out of its bytes (EXIF, XMP, ICC,
+   IPTC, comments, and anything after the image; `src/lib/stripJpeg.js`, an
+   allowlist). A photo that can be neither (e.g. a HEIC the browser can't
+   decode) is not uploaded; the app names it. The server never logs, returns
+   or stores capture times.
 
 ---
 
@@ -574,7 +582,8 @@ cd ~/projects/photorank && git checkout pre-pr-<number> && (cd frontend && npm c
 - `api/main.py:_sent_capture_times()` — parses the PWA's `capture_times` field; anything malformed is ignored (→ set mode)
 - `frontend/src/lib/captureTime.js:readCaptureTime()` — DateTimeOriginal from the first 128 KB of an original JPEG; reads no other tag
 - `frontend/src/lib/notes.js:fallbackNotes()` — one note per photo without a Gemini note, each true for its photo; `noteClaims()` is the same as data (tested)
-- `frontend/src/compress.js:compressImage()` — ~1.5 MP JPEG re-encode; `createImageBitmap`, else an `<img>`; on failure uploads and previews the original
+- `frontend/src/compress.js:compressImage()` — ~1.5 MP JPEG re-encode (`createImageBitmap`, else an `<img>`); on failure the JPEG with its metadata stripped; else `unprepared` (not uploaded)
+- `frontend/src/lib/stripJpeg.js:stripJpegMetadata()` — keeps only the segments a decoder needs (allowlist) and nothing after EOI; null if it can't
 - `api/main.py:_run_burst()` — burst scoring sub-routine (called after EXIF stripping by ingest)
 - `api/main.py:_run_set()` — set mode scoring sub-routine (deterministic → Gemini → merge → rank)
 
