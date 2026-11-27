@@ -178,25 +178,31 @@ BURST_NAMES = ["1000330417.jpg", "1000330418.jpg", "1000330419.jpg", "1000330420
 
 
 def _spy_on_uploads(monkeypatch) -> dict:
-    """Record the capture_times field, and the bytes and EXIF of each file the server got."""
+    """Record the capture_times and orientations fields, and the bytes and EXIF of each file."""
     from PIL import Image
 
-    seen = {"capture_times": None, "exif_tags": [], "raw": []}
+    seen = {"capture_times": None, "orientations": None, "exif_tags": [], "raw": []}
     real_sent, real_ingest = getattr(api, "_sent_capture_times", None), api.ingest
+    real_turn = getattr(api, "_sent_orientations", None)
 
     def sent(raw):
         seen["capture_times"] = raw
         return real_sent(raw)
 
-    def ingest(paths):
+    def turn(raw):
+        seen["orientations"] = raw
+        return real_turn(raw)
+
+    def ingest(paths, **kwargs):
         for p in paths:
             seen["raw"].append(Path(p).read_bytes())
             with Image.open(p) as im:
                 exif = im.getexif()
                 seen["exif_tags"].append(len(exif) + len(exif.get_ifd(0x8769)) + len(exif.get_ifd(0x8825)))
-        return real_ingest(paths)
+        return real_ingest(paths, **kwargs)
 
     monkeypatch.setattr(api, "_sent_capture_times", sent, raising=False)
+    monkeypatch.setattr(api, "_sent_orientations", turn, raising=False)
     monkeypatch.setattr(api, "ingest", ingest)
     return seen
 
@@ -387,3 +393,70 @@ def test_burst_notes_are_true_for_each_photo(site, tmp_path, monkeypatch):
             worse = text.removesuffix(" than №1.").lower()
         assert _shown(p, WORSE[worse]) < _shown(top, WORSE[worse]), (text, p, top)
     assert len(set(note.values())) > 1
+
+
+# --- A sideways photo is scored and shown upright, however it was prepared ---
+# Cameras often store pixels sideways with an EXIF Orientation tag. Compression
+# applies it (the browser decodes upright); stripping drops it, so for stripped
+# uploads the app sends the orientation and the server turns them upright.
+
+SIDEWAYS = 6  # stored 320x240; shown 240x320, turned 90 degrees clockwise
+
+
+def _sideways_burst() -> list[tuple[str, bytes]]:
+    return [(name, exif_jpeg(width=320, seed=i, dto=t, blur=1.0, orientation=SIDEWAYS, all_metadata=True))
+            for i, (name, t) in enumerate(zip(PHONE_NAMES[:3], PHONE_TIMES[:3]))]
+
+
+def _spy_on_scoring(monkeypatch) -> dict:
+    """The pixels each photo was scored on, by photo_id."""
+    import cv2
+
+    scored, real = {}, api.compute_burst_scores
+
+    def spy(path, photo_id=None):
+        scored[photo_id] = cv2.imread(str(path))
+        return real(path, photo_id=photo_id)
+
+    monkeypatch.setattr(api, "compute_burst_scores", spy)
+    return scored
+
+
+def _upright(data: bytes):
+    import cv2
+    import numpy as np
+
+    stored = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+    return cv2.rotate(stored, cv2.ROTATE_90_CLOCKWISE)
+
+
+def _correlation(a, b) -> float:
+    import cv2
+    import numpy as np
+
+    a, b = (cv2.cvtColor(x, cv2.COLOR_BGR2GRAY).astype(float).ravel() for x in (a, b))
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+@pytest.mark.parametrize("breaks", [(), ("createImageBitmap",), ("createImageBitmap", "imgDecode")],
+                         ids=["compressed", "compressed_via_img", "stripped"])
+def test_a_sideways_photo_is_scored_and_shown_upright(site, tmp_path, monkeypatch, breaks):
+    seen = _spy_on_uploads(monkeypatch)
+    scored = _spy_on_scoring(monkeypatch)
+    photos = _sideways_burst()
+    out = _drive(site, tmp_path, monkeypatch, None, photos, breaks=breaks)
+    assert out["mode"] == "burst"
+
+    # Only a stripped upload sends its orientation; a compressed one is upright
+    # already, and turning it again would put it on its side.
+    stripped = "imgDecode" in breaks
+    sent = json.loads(seen["orientations"]) if seen["orientations"] else None
+    assert sent == ({name: SIDEWAYS for name, _ in photos} if stripped else None)
+    if stripped:
+        assert seen["exif_tags"] == [0] * len(photos)  # the value went in its own field
+
+    for name, data in photos:
+        upright = _upright(data)
+        assert scored[name].shape[:2] == upright.shape[:2] == (320, 240), name
+        assert _correlation(scored[name], upright) > 0.9, name
+    assert {c["width"] for c in out["fresh"]["cards"]} == {240}  # shown upright too

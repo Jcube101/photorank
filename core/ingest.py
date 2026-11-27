@@ -43,12 +43,41 @@ def collect_images(source: str | Path) -> list[Path]:
     return sorted(p for p in src.iterdir() if p.suffix.lower() in SUPPORTED_EXTENSIONS)
 
 
-def _compress(src: Path, dest_dir: Path) -> Path:
+# EXIF orientation (1-8) -> how to turn the stored pixels upright, as in EXIF
+# 2.3 / Pillow's ImageOps.exif_transpose. 1 is already upright.
+_UPRIGHT = {
+    2: lambda im: cv2.flip(im, 1),                              # mirrored
+    3: lambda im: cv2.rotate(im, cv2.ROTATE_180),
+    4: lambda im: cv2.flip(im, 0),                              # mirrored vertically
+    5: lambda im: cv2.transpose(im),                            # mirrored, rotated
+    6: lambda im: cv2.rotate(im, cv2.ROTATE_90_CLOCKWISE),
+    7: lambda im: cv2.flip(cv2.transpose(im), -1),              # mirrored, rotated
+    8: lambda im: cv2.rotate(im, cv2.ROTATE_90_COUNTERCLOCKWISE),
+}
+
+
+def apply_orientation(bgr, orientation: int):
+    """Turn stored pixels upright for an EXIF orientation value (1-8)."""
+    turn = _UPRIGHT.get(orientation)
+    return turn(bgr) if turn else bgr
+
+
+def _compress(src: Path, dest_dir: Path, orientation: int | None = None) -> Path:
     """
     Load src, resize down to _TARGET_PIXELS if larger, write JPEG to dest_dir.
     Keeps aspect ratio. Returns the destination path.
+
+    `orientation` (EXIF 1-8) turns the pixels upright, for a photo whose EXIF
+    was stripped before upload (the PWA sends it separately). Any orientation
+    still in the file is then ignored, so a photo is never turned twice.
+    Without it, cv2 applies the file's own EXIF orientation, if any.
     """
-    bgr = cv2.imread(str(src))
+    if orientation is None:
+        bgr = cv2.imread(str(src))
+    else:
+        bgr = cv2.imread(str(src), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+        if bgr is not None:
+            bgr = apply_orientation(bgr, orientation)
     if bgr is None:
         raise ValueError(f"Could not read image: {src}")
 
@@ -62,12 +91,15 @@ def _compress(src: Path, dest_dir: Path) -> Path:
     return dest
 
 
-def ingest(source: str | Path | list[str | Path]) -> tuple[list[dict], Path]:
+def ingest(source: str | Path | list[str | Path],
+           orientations: dict[Path, int] | None = None) -> tuple[list[dict], Path]:
     """
     Collect, validate, and compress images for the scoring pipeline.
 
     Args:
         source: a directory path, a single image path, or a list of paths.
+        orientations: {path: EXIF orientation 1-8} for images whose stored
+            pixels must be turned upright first (see _compress).
 
     Returns:
         (photos, temp_dir)
@@ -93,7 +125,7 @@ def ingest(source: str | Path | list[str | Path]) -> tuple[list[dict], Path]:
 
     for p in paths:
         try:
-            compressed = _compress(p, temp_dir)
+            compressed = _compress(p, temp_dir, (orientations or {}).get(p))
             photos.append({
                 "photo_id":      p.name,
                 "original_path": str(p),

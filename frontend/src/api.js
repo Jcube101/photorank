@@ -50,6 +50,9 @@ function messageForStatus(status) {
  * @param {Object<string,string>} [opts.captureTimes]  Upload name → EXIF
  *   DateTimeOriginal ("YYYY:MM:DD HH:MM:SS"), read before compression. Sent as
  *   the `capture_times` field; photos without a time are left out.
+ * @param {Object<string,number>} [opts.orientations]  Upload name → EXIF
+ *   orientation (2–8), only for photos uploaded with their metadata stripped.
+ *   Sent as the `orientations` field; the server turns those photos upright.
  * @returns {Promise<object>} The ranker JSON (top-level output, SPECS §5.4).
  *
  * `mode` is intentionally omitted so the server auto-detects burst vs set
@@ -69,6 +72,10 @@ export async function rankPhotos(files, profile, opts = {}) {
   const times = opts.captureTimes ?? {};
   if (Object.keys(times).length > 0) {
     form.append("capture_times", JSON.stringify(times));
+  }
+  const orientations = opts.orientations ?? {};
+  if (Object.keys(orientations).length > 0) {
+    form.append("orientations", JSON.stringify(orientations));
   }
 
   let res;

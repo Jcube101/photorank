@@ -63,7 +63,9 @@ public/
   `<img>`. If it still can't be re-encoded, a JPEG is uploaded with every
   metadata segment stripped (no EXIF, GPS, XMP, IPTC or comments), and anything
   else (e.g. HEIC outside iOS Safari) is not uploaded and is named on screen.
-  The original is never uploaded as-is.
+  The original is never uploaded as-is. A stripped photo loses its EXIF
+  orientation, so the app sends that one number (`orientations`) and the server
+  turns the photo upright before scoring.
 - **Notes:** burst-mode photos have no AI note, so each gets one comparing it
   with the others (`src/lib/notes.js`): only №1 is called the best at anything;
   the rest are described against №1.

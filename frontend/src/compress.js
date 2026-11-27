@@ -11,9 +11,12 @@
 // an <img> instead. If the photo still can't be re-encoded, the original is
 // NEVER uploaded as-is: it carries EXIF (GPS included), XMP, IPTC and more.
 // A JPEG has every metadata segment cut out of its bytes, without decoding
-// (lib/stripJpeg.js), and that is uploaded and previewed. Anything else (e.g.
-// a HEIC this browser can't decode) is not uploaded at all; the loading and
-// results screens name it.
+// (lib/stripJpeg.js), and that is uploaded. Stripping drops the EXIF
+// orientation, so the stored pixels may be sideways: the loading screen sends
+// the orientation for these photos only (`orientations`), the server turns
+// them upright before scoring, and the preview is the original, which this
+// browser shows upright. Anything else (e.g. a HEIC this browser can't decode)
+// is not uploaded at all; the loading and results screens name it.
 
 import { COMPRESS_MAX_PIXELS, COMPRESS_QUALITY } from "./config.js";
 import { stripJpegMetadata } from "./lib/stripJpeg.js";
@@ -26,9 +29,10 @@ import { stripJpegMetadata } from "./lib/stripJpeg.js";
  *                     file: File|null, previewUrl: string|null, name: string }>}
  *   `file` is what to upload, named `name`: the compressed JPEG, or the
  *   original JPEG with its metadata stripped; null when neither could be made
- *   ("unprepared": don't upload it). `previewUrl` is an object URL of that same
- *   file, so the screen shows what was scored. `name` maps the result back to
- *   the preview by photo_id.
+ *   ("unprepared": don't upload it). `previewUrl` is an object URL for
+ *   display: of the compressed file, or of the original when stripped (it
+ *   shows upright, as the server scores it; it never leaves the phone).
+ *   `name` maps the result back to the preview by photo_id.
  */
 export async function compressImage(file, name = file.name) {
   try {
@@ -37,15 +41,15 @@ export async function compressImage(file, name = file.name) {
   } catch {
     const clean = await stripMetadata(file);
     if (!clean) return { status: "unprepared", file: null, previewUrl: null, name };
-    return prepared("stripped", new Blob([clean], { type: "image/jpeg" }), name);
+    return prepared("stripped", new Blob([clean], { type: "image/jpeg" }), name, file);
   }
 }
 
 // Upload under `name`: the server echoes it as the photo_id, which maps the
 // result back to this preview on the results screen.
-function prepared(status, blob, name) {
+function prepared(status, blob, name, preview = blob) {
   const file = new File([blob], name, { type: "image/jpeg" });
-  return { status, file, previewUrl: URL.createObjectURL(blob), name };
+  return { status, file, previewUrl: URL.createObjectURL(preview), name };
 }
 
 /** The file's bytes with all metadata removed, or null if it isn't a clean-able JPEG. */
